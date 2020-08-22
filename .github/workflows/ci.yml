@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  - pull_request
+  - push
+
+jobs:
+  build:
+    strategy:
+      matrix: 
+        os: [ubuntu-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+
+      - name: Setup stack
+        uses: mstksg/setup-stack@v1
+      
+      - name: Generate cache key
+        id: cache_key 
+        run: echo ::set-output name=key::$(mdsum stack.yaml | awk '{print $1}')
+
+      - name: Cache deps
+        id: cache
+        uses: actions/cache@v1
+        with:
+          path: ~/.stack
+          key: ${{ matrix.os }}-${{ steps.cache_key.outputs.key }}
+
+      - name: Build and run tests
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: stack --no-terminal test --bench --only-snapshot
+
+
