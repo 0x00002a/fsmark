@@ -129,7 +129,7 @@ initDb :: Connection -> Bool -> IO ()
 initDb conn False = mapM_ (\sql -> execute_ conn $ Query sql) dbTables
 initDb _ _ = return ()
 
-connect :: Text -> Maybe FilePath -> IO Context
+connect :: Text -> Maybe Text -> IO Context
 connect shelf_name connection_path =
   getPath >>= \p ->
     DIR.doesFileExist p
@@ -141,7 +141,7 @@ connect shelf_name connection_path =
     initAndGetShelfId = \exists ctx -> initDb ctx exists >> (\id -> ShelfID id) <$> getShelfId shelf_name ctx
     createContext = Context
     getPath = case connection_path of
-      Just p -> return p
+      Just p -> return $ unpack p
       Nothing -> dbPath
 
 getFiles :: Text -> Context -> IO [File]

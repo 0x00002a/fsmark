@@ -26,7 +26,9 @@ import qualified Pretty
 import qualified System.Directory as DIR
 import System.Exit
 
-data ArgsResult = ArgsResult Command (Maybe Text)
+data ArgsResult
+  = ArgsResult Command (Maybe Text) (Maybe Text)
+  | VersionCheck Bool
 
 data ShelfArgs
   = AddShelf Text
@@ -53,8 +55,8 @@ add_opts =
           <> help "Set name for a new or changed target"
       )
 
-generate_parse_info :: ParserInfo Command
-generate_parse_info = info' parse_details "Shelve your files to refer to them quickly later"
+generate_parse_info :: Parser Command
+generate_parse_info = parse_details --"Shelve your files to refer to them quickly later"
   where
     parse_details =
       (subparser . foldMap cmd_info)
@@ -118,12 +120,14 @@ generate_parse_info = info' parse_details "Shelve your files to refer to them qu
     cmd_info (cmd_name, desc, parser) = command cmd_name (info' parser desc)
 
 generateArgsInfo :: ParserInfo ArgsResult
-generateArgsInfo = makeArgsInfo $ infoParser generate_parse_info
+generateArgsInfo = makeArgsInfo generate_parse_info
 
 makeArgsInfo :: Parser Command -> ParserInfo ArgsResult
 makeArgsInfo cmd = info (args <**> helper) (fullDesc <> progDesc "")
   where
-    args =
+    args = cmdArgs <|> versionArgs
+
+    cmdArgs =
       ArgsResult
         <$> cmd
         <*> ( optional $
@@ -132,14 +136,27 @@ makeArgsInfo cmd = info (args <**> helper) (fullDesc <> progDesc "")
                       <> help "The shelf to use"
                   )
             )
+        <*> ( optional $
+                strOption
+                  ( long "database-path"
+                      <> help "Path to custom database"
+                  )
+            )
+    versionArgs =
+      VersionCheck
+        <$> switch
+          ( long "version"
+              <> help "Print version information"
+          )
 
 someFunc :: IO ()
 someFunc = parseOptions =<< execParser generateArgsInfo
 
 parseOptions :: ArgsResult -> IO ()
-parseOptions (ArgsResult cmd shelf_name) = case shelf_name of
-  Just shelf -> DB.connect shelf Nothing >>= parseCommand cmd
-  Nothing -> DB.connect DB.defaultShelfName Nothing >>= parseCommand cmd
+parseOptions (ArgsResult cmd shelf_name db_path) = case shelf_name of
+  Just shelf -> DB.connect shelf db_path >>= parseCommand cmd
+  Nothing -> DB.connect DB.defaultShelfName db_path >>= parseCommand cmd
+parseOptions (VersionCheck _) = Pretty.printVersionInfo
 
 parseCommand :: Command -> DB.Context -> IO ()
 parseCommand (List path_only (Just name)) ctx = DB.retrieveAllLike name ctx >>= \files -> pathsPrinter path_only files

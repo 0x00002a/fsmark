@@ -14,10 +14,12 @@
 --
 -- You should have received a copy of the GNU General Public License
 -- along with file-shelf.  If not, see <http://www.gnu.org/licenses/>.
+{-# LANGUAGE OverloadedStrings #-}
 
 module Pretty where
 
 import Data.Text (Text, unpack)
+import Text.Printf (printf)
 
 class PrettyPrintable a where
   display :: a -> IO ()
@@ -27,3 +29,9 @@ instance PrettyPrintable Text where
 
 printList :: (PrettyPrintable a) => [a] -> IO ()
 printList = mapM_ display
+
+versionString :: Text
+versionString = "0.1.0"
+
+printVersionInfo :: IO ()
+printVersionInfo = printf "fsm (version %s)\n" versionString
