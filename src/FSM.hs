@@ -14,8 +14,9 @@
 --
 -- You should have received a copy of the GNU General Public License
 -- along with file-shelf.  If not, see <http://www.gnu.org/licenses/>.
+{-# LANGUAGE OverloadedStrings #-}
 
-module Lib where
+module FSM where
 
 import qualified DB
 import Data.Semigroup ((<>))
@@ -25,25 +26,32 @@ import qualified Options.Applicative.Help as OH
 import qualified Pretty
 import qualified System.Directory as DIR
 import System.Exit
+import System.IO
+import Text.Printf (printf)
+
+runFSM :: IO ()
+runFSM = customExecParser p generateArgsInfo >>= parseOptions
+  where
+    p = prefs (showHelpOnEmpty <> disambiguate)
 
 data ArgsResult
   = ArgsResult Command (Maybe Text) (Maybe Text)
-  | VersionCheck Bool
 
 data ShelfArgs
   = AddShelf Text
-  | RemoveShelf Text
+  | RemoveShelf Text Bool
   | ListShelves
   | RenameShelf Text Text
 
 data Command
   = AddCmd Text Text
   | List Bool (Maybe Text)
-  | Remove Text
+  | Remove Text Bool
   | ShelfCmd ShelfArgs
   | CopyCmd Text Text Text
   | MoveCmd Text Text Text
   | RenameCmd Text Text
+  | VersionCmd
 
 add_opts :: Parser Command
 add_opts =
@@ -67,7 +75,8 @@ generate_parse_info = parse_details --"Shelve your files to refer to them quickl
           ("move", "Move an entry to a different shelf", moveEntryOpts),
           ("copy", "Copy an entry to a different shelf", copyEntryOpts),
           ("rename", "Rename an entry", renameEntryOpts),
-          ("fp", "Print entry with path, shorthand for: list --path --name <TARGET>", pathPrintOpts)
+          ("fp", "Print entry with path, shorthand for: list --path --name <TARGET>", pathPrintOpts),
+          ("version", "Print version information", pure VersionCmd)
         ]
 
     pathPrintOpts =
@@ -93,7 +102,7 @@ generate_parse_info = parse_details --"Shelve your files to refer to them quickl
             )
     remove_opts =
       Remove
-        <$> argument str (metavar "NAME")
+        <$> argument str (metavar "NAME") <*> noConfirmSwitch
 
     moveCopyOpts = strOption (long "from" <> short 'f' <> help "Source shelf")
     moveCopyOpts2 = strOption (long "to" <> short 't' <> help "Destination shelf")
@@ -108,10 +117,12 @@ generate_parse_info = parse_details --"Shelve your files to refer to them quickl
             ("list", "List all shelves", pure ListShelves),
             ("rename", "Rename a shelf", renameShelfOpts)
           ]
+
+    noConfirmSwitch = switch (long "no-confirm" <> short 'y' <> help "Auto accept all confirmation dialogs")
     shelf_add_opts =
       AddShelf <$> strArgument (metavar "NAME")
     shelf_remove_opts =
-      RemoveShelf <$> strArgument (metavar "NAME")
+      RemoveShelf <$> strArgument (metavar "NAME") <*> noConfirmSwitch
     renameShelfOpts =
       RenameShelf <$> strOption (long "from" <> short 'f' <> help "Source name")
         <*> strOption (long "to" <> short 't' <> help "Target name")
@@ -125,7 +136,7 @@ generateArgsInfo = makeArgsInfo generate_parse_info
 makeArgsInfo :: Parser Command -> ParserInfo ArgsResult
 makeArgsInfo cmd = info (args <**> helper) (fullDesc <> progDesc "")
   where
-    args = cmdArgs <|> versionArgs
+    args = cmdArgs
 
     cmdArgs =
       ArgsResult
@@ -142,21 +153,11 @@ makeArgsInfo cmd = info (args <**> helper) (fullDesc <> progDesc "")
                       <> help "Path to custom database"
                   )
             )
-    versionArgs =
-      VersionCheck
-        <$> switch
-          ( long "version"
-              <> help "Print version information"
-          )
-
-someFunc :: IO ()
-someFunc = parseOptions =<< execParser generateArgsInfo
 
 parseOptions :: ArgsResult -> IO ()
 parseOptions (ArgsResult cmd shelf_name db_path) = case shelf_name of
   Just shelf -> DB.connect shelf db_path >>= parseCommand cmd
   Nothing -> DB.connect DB.defaultShelfName db_path >>= parseCommand cmd
-parseOptions (VersionCheck _) = Pretty.printVersionInfo
 
 parseCommand :: Command -> DB.Context -> IO ()
 parseCommand (List path_only (Just name)) ctx = DB.retrieveAllLike name ctx >>= \files -> pathsPrinter path_only files
@@ -164,7 +165,16 @@ parseCommand (List path_only Nothing) ctx = DB.retrieveAll ctx >>= \files -> pat
 parseCommand (AddCmd target name) ctx = file ctx >>= \f -> DB.insert f ctx
   where
     file = DB.makeFile name target
-parseCommand (Remove name) ctx = DB.removeFile name ctx
+parseCommand (Remove name no_confirm) ctx = getConfirm >>= removeDecider
+  where
+    getConfirm =
+      if no_confirm
+        then return True
+        else getConfirmationYesNo "This will permanently delete this entry "
+    removeDecider remove =
+      if remove
+        then DB.removeFile name ctx
+        else return ()
 parseCommand (ShelfCmd cmd) ctx = parseShelvesCmd cmd ctx
 parseCommand (MoveCmd from to name) ctx = parseCommand (CopyCmd from to name) ctx >> DB.removeFile name (DB.changeTargetShelf (DB.ShelfName from) ctx)
 parseCommand (CopyCmd from to name) ctx =
@@ -174,11 +184,20 @@ parseCommand (CopyCmd from to name) ctx =
   where
     doCopy = \to to_ctx -> DB.copyEntryTo to name to_ctx
 parseCommand (RenameCmd from to) ctx = DB.getFiles from ctx >>= \files -> DB.rename (files !! 0) to ctx
-parseCommand _ _ = handleUnknownOpt
+parseCommand (VersionCmd) _ = Pretty.printVersionInfo
 
 parseShelvesCmd :: ShelfArgs -> DB.Context -> IO ()
 parseShelvesCmd (AddShelf name) ctx = DB.insert (DB.ShelfName name) ctx
-parseShelvesCmd (RemoveShelf name) ctx = DB.removeShelf name ctx
+parseShelvesCmd (RemoveShelf name no_confirm) ctx = getConfirm >>= removeDecider
+  where
+    getConfirm =
+      if no_confirm
+        then return True
+        else getConfirmationYesNo "This will permanently delete this shelf and all its entries "
+    removeDecider remove =
+      if remove
+        then DB.removeShelf name ctx
+        else return ()
 parseShelvesCmd (ListShelves) ctx = DB.getAllShelfNames ctx >>= Pretty.printList
 parseShelvesCmd (RenameShelf from to) ctx = DB.rename (DB.ShelfName from) to ctx
 
@@ -189,5 +208,11 @@ pathsPrinter :: Bool -> [DB.File] -> IO ()
 pathsPrinter False files = Pretty.printList $ extractPaths files
 pathsPrinter True files = Pretty.printList files
 
-handleUnknownOpt :: IO ()
-handleUnknownOpt = die $ "Unknown option\n\n"
+getConfirmationYesNo :: Text -> IO Bool
+getConfirmationYesNo prompt = printf "%s are you sure? [y/n]: " prompt >> hFlush stdout >> getLine >>= checkLine
+  where
+    checkLine "yes" = return True
+    checkLine "y" = return True
+    checkLine "no" = return False
+    checkLine "n" = return False
+    checkLine _ = putStrLn "Please enter y or n" >> getConfirmationYesNo prompt

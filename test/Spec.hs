@@ -23,7 +23,7 @@ import DB
   )
 import qualified DB
 import Data.Text (Text)
-import qualified Lib as L
+import qualified FSM as L
 import Test.HUnit
 import TestsDB (resetDb, testDb)
 
