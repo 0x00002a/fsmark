@@ -156,16 +156,20 @@ makeArgsInfo cmd = info (args <**> helper) (fullDesc <> progDesc "")
 
 parseOptions :: ArgsResult -> IO ()
 parseOptions (ArgsResult cmd shelf_name db_path) = case shelf_name of
-  Just shelf -> DB.connect shelf db_path >>= parseCommand cmd
+  Just shelf -> DB.connect shelf db_path >>= \db -> checkShelfExists shelf db >> parseCommand cmd db
   Nothing -> DB.connect DB.defaultShelfName db_path >>= parseCommand cmd
 
 parseCommand :: Command -> DB.Context -> IO ()
 parseCommand (List path_only (Just name)) ctx = DB.retrieveAllLike name ctx >>= \files -> pathsPrinter path_only files
 parseCommand (List path_only Nothing) ctx = DB.retrieveAll ctx >>= \files -> pathsPrinter path_only files
-parseCommand (AddCmd target name) ctx = file ctx >>= \f -> DB.insert f ctx
+parseCommand (AddCmd target name) ctx =
+  DB.exists (setupFile name ctx) ctx >>= \exists ->
+    if exists
+      then printf "An entry with the name '%s' already exists on this shelf" name >> exitFailure
+      else file ctx >>= \f -> DB.insert f ctx
   where
     file = DB.makeFile name target
-parseCommand (Remove name no_confirm) ctx = getConfirm >>= removeDecider
+parseCommand (Remove name no_confirm) ctx = checkFileExists name ctx >> printf "Test" >> getConfirm >>= removeDecider
   where
     getConfirm =
       if no_confirm
@@ -180,26 +184,31 @@ parseCommand (MoveCmd from to name) ctx = parseCommand (CopyCmd from to name) ct
 parseCommand (CopyCmd from to name) ctx =
   if from == to
     then die "Source and destination shelves must be different"
-    else (\src -> doCopy (DB.ShelfName to) (DB.changeTargetShelf src ctx)) $ DB.ShelfName from
+    else existsCheck >> ((\src -> doCopy (DB.ShelfName to) (DB.changeTargetShelf src ctx)) $ DB.ShelfName from)
   where
-    doCopy = \to to_ctx -> DB.copyEntryTo to name to_ctx
-parseCommand (RenameCmd from to) ctx = DB.getFiles from ctx >>= \files -> DB.rename (files !! 0) to ctx
+    doCopy = \to to_ctx -> checkFileNotExists name to_ctx >> DB.copyEntryTo to name to_ctx
+    existsCheck = checkShelfExists from ctx >> checkShelfExists to ctx >> checkFileExists name ctx
+parseCommand (RenameCmd from to) ctx = existsCheck >> DB.getFiles from ctx >>= \files -> DB.rename (files !! 0) to ctx
+  where
+    existsCheck = checkFileExists from ctx
 parseCommand (VersionCmd) _ = Pretty.printVersionInfo
 
 parseShelvesCmd :: ShelfArgs -> DB.Context -> IO ()
-parseShelvesCmd (AddShelf name) ctx = DB.insert (DB.ShelfName name) ctx
-parseShelvesCmd (RemoveShelf name no_confirm) ctx = getConfirm >>= removeDecider
+parseShelvesCmd (AddShelf name) ctx = checkShelfNotExists name ctx >> DB.insert (DB.ShelfName name) ctx
+parseShelvesCmd (RemoveShelf name no_confirm) ctx = checkShelfExists name ctx >> getConfirm >>= removeDecider
   where
     getConfirm =
       if no_confirm
         then return True
-        else getConfirmationYesNo "This will permanently delete this shelf and all its entries "
+        else getConfirmationYesNo "This will permanently delete this shelf and all its entries"
     removeDecider remove =
       if remove
         then DB.removeShelf name ctx
         else return ()
 parseShelvesCmd (ListShelves) ctx = DB.getAllShelfNames ctx >>= Pretty.printList
-parseShelvesCmd (RenameShelf from to) ctx = DB.rename (DB.ShelfName from) to ctx
+parseShelvesCmd (RenameShelf from to) ctx = existsCheck >> DB.rename (DB.ShelfName from) to ctx
+  where
+    existsCheck = checkShelfExists from ctx
 
 extractPaths :: [DB.File] -> [Text]
 extractPaths files = map (\f -> DB.path f) files
@@ -216,3 +225,38 @@ getConfirmationYesNo prompt = printf "%s are you sure? [y/n]: " prompt >> hFlush
     checkLine "no" = return False
     checkLine "n" = return False
     checkLine _ = putStrLn "Please enter y or n" >> getConfirmationYesNo prompt
+
+setupFile :: Text -> DB.Context -> DB.File
+setupFile name ctx = DB.File name "" (DB.target_shelf ctx)
+
+checkShelfExists :: Text -> DB.Context -> IO ()
+checkShelfExists name ctx =
+  DB.exists (DB.ShelfName name) ctx
+    >>= \exists ->
+      if exists
+        then return ()
+        else printf "Shelf '%s' does not exist" name >> exitFailure
+
+checkFileExists :: Text -> DB.Context -> IO ()
+checkFileExists name ctx =
+  DB.exists (setupFile name ctx) ctx
+    >>= \exists ->
+      if exists
+        then return ()
+        else printf "Entry '%s' does not exist (are you on the right shelf?)" name >> exitFailure
+
+checkFileNotExists :: Text -> DB.Context -> IO ()
+checkFileNotExists name ctx =
+  DB.exists (setupFile name ctx) ctx
+    >>= \exists ->
+      if exists
+        then printf "Entry '%s' already exists on that shelf" name >> exitFailure
+        else return ()
+
+checkShelfNotExists :: Text -> DB.Context -> IO ()
+checkShelfNotExists name ctx =
+  DB.exists (DB.ShelfName name) ctx
+    >>= \exists ->
+      if exists
+        then printf "Shelf '%s' already exists" name >> exitFailure
+        else return ()
