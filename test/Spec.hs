@@ -45,14 +45,14 @@ addShelfTest = TestCase (testDb >>= (\db -> L.parseShelvesCmd (L.AddShelf "test-
 
 getShelfIdTest = TestCase (testDb >>= (\db -> createShelf "idShelfTest" db >>= \shelf -> DB.dbId shelf db >> assertDBItemExists shelf db))
 
-removeDefaultTest = TestCase (testDb >>= \db -> L.parseShelvesCmd (L.RemoveShelf "default") db >> checkNotRemoved db)
+removeDefaultTest = TestCase (testDb >>= \db -> L.parseShelvesCmd (L.RemoveShelf "default" True) db >> checkNotRemoved db)
   where
     checkNotRemoved = \db -> assertDBItemExists (DB.defaultShelf) db
 
 addRemoveShelfTest = TestCase (testDb >>= (\db -> createShelf db >> rmShelf db >> doAssert db))
   where
     createShelf = L.parseShelvesCmd (L.AddShelf "test-shelf2")
-    rmShelf = L.parseShelvesCmd (L.RemoveShelf "test-shelf2")
+    rmShelf = L.parseShelvesCmd (L.RemoveShelf "test-shelf2" True)
     doAssert = assertNotDBItemExists (DB.ShelfName "test-shelf2")
 
 dbCopyEntryTest = TestCase (testDb >>= (\db -> createEntry "copyDbTest" DB.defaultShelf db >>= \entry -> createShelf "copyToDbShelf" db >>= \shelf -> DB.copyEntryTo shelf (DB.name entry) db >> assertDBItemExists entry db))

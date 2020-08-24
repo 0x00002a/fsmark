@@ -21,7 +21,7 @@ module DB
     getFiles,
     getAllFiles,
     removeFile,
-    DBObject (insert, remove, retrieveAll, exists, dbId, rename, retrieveAllLike),
+    DBObject (insert, remove, retrieveAll, exists, dbId, rename, retrieveAllLike, getName),
     File (path, name, File),
     Shelf (ShelfName),
     Context (target_shelf),
@@ -47,6 +47,7 @@ import qualified Pretty
 import qualified System.Directory as DIR
 import System.FilePath ((</>))
 import Text.Printf (printf)
+import Types
 
 class DBObject a where
   exists :: a -> Context -> IO Bool
@@ -62,17 +63,6 @@ data Context = Context
   { conn :: Connection,
     target_shelf :: Shelf
   }
-
-data File = File
-  { name :: Text,
-    path :: Text,
-    shelf_id :: Shelf
-  }
-
-data Shelf
-  = ShelfID Integer
-  | ShelfName Text
-  deriving (Show, Eq)
 
 instance DBObject Shelf where
   insert (ShelfName name) ctx = execute (conn ctx) "INSERT INTO shelves (name) VALUES (?)" (Only name)
@@ -180,7 +170,7 @@ makeFile :: Text -> Text -> Context -> IO File
 makeFile name path context = ctor <$> getDir
   where
     getDir = (\p -> pack p) <$> (DIR.makeAbsolute $ unpack path)
-    ctor = \dir -> DB.File name dir (target_shelf context)
+    ctor = \dir -> File name dir (target_shelf context)
 
 defaultShelfName :: Text
 defaultShelfName = "default"

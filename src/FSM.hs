@@ -186,7 +186,7 @@ parseCommand (CopyCmd from to name) ctx =
     then die "Source and destination shelves must be different"
     else existsCheck >> ((\src -> doCopy (DB.ShelfName to) (DB.changeTargetShelf src ctx)) $ DB.ShelfName from)
   where
-    doCopy = \to to_ctx -> checkFileNotExists name to_ctx >> DB.copyEntryTo to name to_ctx
+    doCopy = \to src_ctx -> checkFileNotExists name (DB.changeTargetShelf to src_ctx) >> DB.copyEntryTo to name src_ctx
     existsCheck = checkShelfExists from ctx >> checkShelfExists to ctx >> checkFileExists name ctx
 parseCommand (RenameCmd from to) ctx = existsCheck >> DB.getFiles from ctx >>= \files -> DB.rename (files !! 0) to ctx
   where
