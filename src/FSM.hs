@@ -28,6 +28,7 @@ import qualified System.Directory as DIR
 import System.Exit
 import System.IO
 import Text.Printf (printf)
+import qualified Types as T
 
 runFSM :: IO ()
 runFSM = customExecParser p generateArgsInfo >>= parseOptions
@@ -210,10 +211,10 @@ parseShelvesCmd (RenameShelf from to) ctx = existsCheck >> DB.rename (DB.ShelfNa
   where
     existsCheck = checkShelfExists from ctx
 
-extractPaths :: [DB.File] -> [Text]
+extractPaths :: [T.Entry] -> [Text]
 extractPaths files = map (\f -> DB.path f) files
 
-pathsPrinter :: Bool -> [DB.File] -> IO ()
+pathsPrinter :: Bool -> [T.Entry] -> IO ()
 pathsPrinter False files = Pretty.printList $ extractPaths files
 pathsPrinter True files = Pretty.printList files
 
@@ -226,8 +227,8 @@ getConfirmationYesNo prompt = printf "%s are you sure? [y/n]: " prompt >> hFlush
     checkLine "n" = return False
     checkLine _ = putStrLn "Please enter y or n" >> getConfirmationYesNo prompt
 
-setupFile :: Text -> DB.Context -> DB.File
-setupFile name ctx = DB.File name "" (DB.target_shelf ctx)
+setupFile :: Text -> DB.Context -> T.Entry
+setupFile name ctx = T.Entry name "" (DB.target_shelf ctx)
 
 checkShelfExists :: Text -> DB.Context -> IO ()
 checkShelfExists name ctx =

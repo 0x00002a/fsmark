@@ -22,7 +22,7 @@ module DB
     getAllFiles,
     removeFile,
     DBObject (insert, remove, retrieveAll, exists, dbId, rename, retrieveAllLike, getName),
-    File (path, name, File),
+    Entry (path, name, Entry),
     Shelf (ShelfName),
     Context (target_shelf),
     makeFile,
@@ -79,7 +79,7 @@ instance DBObject Shelf where
   getName (ShelfID id) ctx = getShelfName id ctx
   retrieveAllLike name ctx = (\names -> map (\name -> ShelfName name) (setSecondD names)) <$> query (conn ctx) "SELECT name FROM shelves WHERE name LIKE ?" (Only (formatLikeExpr name))
 
-instance DBObject File where
+instance DBObject Entry where
   insert file ctx = execQuery =<< targetShelfId ctx
     where
       execQuery = \id -> execute (conn ctx) "INSERT INTO files (name, path, shelf_id) VALUES (?, ?, ?)" $ args id
@@ -97,10 +97,10 @@ instance DBObject File where
     where
       execQuery = targetShelfId ctx >>= \id -> query (conn ctx) "SELECT name, path, shelf_id FROM files WHERE name LIKE ? AND shelf_id = ?" (formatLikeExpr name, id)
 
-instance Pretty.PrettyPrintable File where
+instance Pretty.PrettyPrintable Entry where
   display f = printf "######\nName: %s\nPath: %s\n" (name f) (path f)
 
-instance Show File where
+instance Show Entry where
   show f = "Name: " ++ unpack (name f) ++ "\nPath: " ++ unpack (path f)
 
 dbPath :: IO FilePath
@@ -134,17 +134,17 @@ connect shelf_name connection_path =
       Just p -> return $ unpack p
       Nothing -> dbPath
 
-getFiles :: Text -> Context -> IO [File]
+getFiles :: Text -> Context -> IO [Entry]
 getFiles name context = (\rs -> map handler rs) <$> (res =<< targetShelfId context)
   where
     res = \id -> query (conn context) "SELECT name, path FROM files WHERE name = ? AND shelf_id = ?" (name, id)
-    handler = \(name, path) -> File name path (target_shelf context)
+    handler = \(name, path) -> Entry name path (target_shelf context)
 
-getAllFiles :: Context -> IO [File]
+getAllFiles :: Context -> IO [Entry]
 getAllFiles context = (\res -> map handler res) <$> (stmt =<< targetShelfId context)
   where
     stmt = \id -> query (conn context) "SELECT name, path, shelf_id FROM files WHERE shelf_id = ?" (Only id)
-    handler = \(n, p, sid) -> File {name = n, path = p, shelf_id = ShelfID sid}
+    handler = \(n, p, sid) -> Entry {name = n, path = p, shelf_id = ShelfID sid}
 
 mapToShelves :: [Text] -> [Shelf]
 mapToShelves = map (\name -> ShelfName name)
@@ -166,11 +166,11 @@ nestedNth n as = (\as2 -> as2 !! n) as !! n
 defaultShelfId :: Context -> IO Integer
 defaultShelfId context = nestedNth 0 <$> query_ (conn context) "SELECT id FROM shelves WHERE is_default = 1"
 
-makeFile :: Text -> Text -> Context -> IO File
+makeFile :: Text -> Text -> Context -> IO Entry
 makeFile name path context = ctor <$> getDir
   where
     getDir = (\p -> pack p) <$> (DIR.makeAbsolute $ unpack path)
-    ctor = \dir -> File name dir (target_shelf context)
+    ctor = \dir -> Entry name dir (target_shelf context)
 
 defaultShelfName :: Text
 defaultShelfName = "default"
@@ -205,8 +205,8 @@ defaultShelf = ShelfName "default"
 setSecondD :: [[a]] -> [a]
 setSecondD = map (\list -> list !! 0)
 
-rsToFile :: (Text, Text, Integer) -> File
-rsToFile (name, path, shelf) = File name path (ShelfID shelf)
+rsToFile :: (Text, Text, Integer) -> Entry
+rsToFile (name, path, shelf) = Entry name path (ShelfID shelf)
 
 formatLikeExpr :: Text -> Text
 formatLikeExpr = T.map repl

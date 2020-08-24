@@ -26,6 +26,7 @@ import Data.Text (Text)
 import qualified FSM as L
 import Test.HUnit
 import TestsDB (resetDb, testDb)
+import qualified Types as T
 
 assertDBItemExists :: (DB.DBObject a) => a -> DB.Context -> IO ()
 assertDBItemExists entry ctx = assertBool "Database entry exists" =<< DB.exists entry ctx
@@ -36,10 +37,10 @@ assertNotDBItemExists entry ctx = (\exists -> assertBool "Database entry does no
 createShelf :: Text -> DB.Context -> IO DB.Shelf
 createShelf name db = (\shelf -> DB.insert shelf db >> return shelf) (DB.ShelfName name)
 
-createEntry :: Text -> DB.Shelf -> DB.Context -> IO DB.File
-createEntry name shelf db = (\file -> DB.insert file db >> return file) (DB.File name "" shelf)
+createEntry :: Text -> DB.Shelf -> DB.Context -> IO T.Entry
+createEntry name shelf db = (\file -> DB.insert file db >> return file) (T.Entry name "" shelf)
 
-addEntryTest = TestCase (testDb >>= (\db -> L.parseCommand (L.AddCmd "." "test1") db >> assertDBItemExists (DB.File "test1" "" DB.dummyShelf) db))
+addEntryTest = TestCase (testDb >>= (\db -> L.parseCommand (L.AddCmd "." "test1") db >> assertDBItemExists (T.Entry "test1" "" DB.dummyShelf) db))
 
 addShelfTest = TestCase (testDb >>= (\db -> L.parseShelvesCmd (L.AddShelf "test-shelf") db >> assertDBItemExists (DB.ShelfName "test-shelf") db))
 
