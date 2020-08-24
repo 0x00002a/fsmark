@@ -19,6 +19,7 @@
 module Json
   ( entryToJson,
     shelfToJson,
+    shelfFromJson,
   )
 where
 
@@ -56,8 +57,19 @@ makeJShelf shelf ctx =
       DB.retrieveAll ctx
         >>= \entries -> return $ Shelf name (map makeJEntry entries)
 
+toInternalEntry :: T.Shelf -> Entry -> T.Entry
+toInternalEntry shelf (Entry name path) = T.Entry name path shelf
+
+toInternalShelf :: Shelf -> (T.Shelf, [T.Entry])
+toInternalShelf (Shelf name entries) = (T.ShelfName name, makeEntries)
+  where
+    makeEntries = map (toInternalEntry (T.ShelfName name)) entries
+
 entryToJson :: T.Entry -> ByteString
 entryToJson entry = encode $ makeJEntry entry
 
 shelfToJson :: T.Shelf -> DB.Context -> IO ByteString
 shelfToJson shelf ctx = encode <$> makeJShelf shelf ctx
+
+shelfFromJson :: ByteString -> Maybe (T.Shelf, [T.Entry])
+shelfFromJson j_str = decode j_str >>= \shelf -> return $ toInternalShelf shelf

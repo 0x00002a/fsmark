@@ -34,7 +34,7 @@ runFSM = customExecParser p generateArgsInfo >>= \options -> (runExceptT $ parse
   where
     p = prefs (showHelpOnEmpty <> disambiguate)
 
-handleErrors :: Either EX.Error () -> IO ()
+handleErrors :: Either EX.Error a -> IO ()
 handleErrors err = case err of
   Left err -> EX.printError err
   Right _ -> return ()
@@ -47,8 +47,8 @@ data ShelfArgs
   | RemoveShelf Text Bool
   | ListShelves
   | RenameShelf Text Text
-  | ExportShelf (Maybe Text)
-  | ImportShelf ()
+  | ExportShelf (Maybe FilePath)
+  | ImportShelf (Maybe FilePath)
 
 data Command
   = AddCmd Text Text
@@ -123,8 +123,13 @@ generate_parse_info = parse_details --"Shelve your files to refer to them quickl
           [ ("add", "Add an new shelf", shelf_add_opts),
             ("remove", "Remove a shelf", shelf_remove_opts),
             ("list", "List all shelves", pure ListShelves),
-            ("rename", "Rename a shelf", renameShelfOpts)
+            ("rename", "Rename a shelf", renameShelfOpts),
+            ("import", "Import a shelf from a file", ImportShelf <$> optionalFilePathArg),
+            ("export", "export a shelf to a file", ExportShelf <$> optionalFilePathArg)
           ]
+
+    filePathArg = strArgument (metavar "FILE")
+    optionalFilePathArg = optional filePathArg
 
     noConfirmSwitch = switch (long "no-confirm" <> short 'y' <> help "Auto accept all confirmation dialogs")
     shelf_add_opts =
@@ -202,6 +207,8 @@ parseShelvesCmd (RemoveShelf name no_confirm) ctx = liftIO $ getConfirm >>= remo
         else return ()
 parseShelvesCmd (ListShelves) ctx = liftIO $ DB.getAllShelfNames ctx >>= Pretty.printList
 parseShelvesCmd (RenameShelf from to) ctx = FSM.renameShelfByName from to ctx
+parseShelvesCmd (ImportShelf path) ctx = FSM.importShelf path ctx
+parseShelvesCmd (ExportShelf path) ctx = FSM.exportShelf (DB.target_shelf ctx) ctx path
 
 extractPaths :: [T.Entry] -> [Text]
 extractPaths files = map (\f -> DB.path f) files

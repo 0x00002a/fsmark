@@ -18,12 +18,22 @@
 
 module FSM where
 
-import Control.Monad.Except (liftIO, throwError)
+import Control.Monad.Except (lift, liftIO, liftM, runExceptT, throwError)
 import qualified DB
 import Data.Text (Text, append)
 import Exceptions (Error (BadInput, DoesNotExist), Exception)
 import qualified Exceptions as EX
-import System.IO (Handle)
+import qualified ImportExport as IE
+import System.IO
+  ( FilePath,
+    Handle,
+    IOMode (ReadMode, WriteMode),
+    hClose,
+    openFile,
+    stdin,
+    stdout,
+    withFile,
+  )
 import qualified Types as T
 
 addEntry :: T.Entry -> DB.Context -> Exception IO ()
@@ -109,4 +119,22 @@ connectToDb (Just shelf@(T.ShelfName shelf_name)) db_path = liftIO (DB.connect s
 connectToDb Nothing db_path = liftIO $ DB.connect DB.defaultShelfName db_path
 
 moveEntryByName :: Text -> Text -> Text -> DB.Context -> Exception IO ()
-moveEntryByName from to name ctx = copyEntry (T.ShelfName from) (T.ShelfName to) name ctx >> FSM.removeEntryByName name ctx
+moveEntryByName from to name ctx = copyEntry (T.ShelfName from) (T.ShelfName to) name ctx >> removeEntryByName name ctx
+
+withOutputHandle :: Maybe FilePath -> (Handle -> IO r) -> IO r
+withOutputHandle (Just "-") act = act stdout
+withOutputHandle (Just fp) act = withFile fp WriteMode act
+
+getInputHandle :: Maybe FilePath -> IO Handle
+getInputHandle (Just "-") = return stdin
+getInputHandle (Just fp) = openFile fp ReadMode
+getInputHandle Nothing = return stdin
+
+exportShelf :: T.Shelf -> DB.Context -> Maybe FilePath -> Exception IO ()
+exportShelf shelf db_ctx output_path = checkExists >> doExport
+  where
+    checkExists = checkShelfExists shelf db_ctx
+    doExport = liftIO $ withOutputHandle output_path $ IE.exportToHandle shelf db_ctx
+
+importShelf :: Maybe FilePath -> DB.Context -> Exception IO ()
+importShelf fp db_ctx = (liftIO $ getInputHandle fp) >>= \file -> (IE.importFromHandle file db_ctx :: Exception IO T.Shelf) >> (liftIO $ hClose file)

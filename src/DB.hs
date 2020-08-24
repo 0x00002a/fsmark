@@ -37,6 +37,7 @@ module DB
     dummyShelf,
     defaultShelf,
     copyEntry,
+    insertMany,
   )
 where
 
