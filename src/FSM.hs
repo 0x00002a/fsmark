@@ -18,246 +18,95 @@
 
 module FSM where
 
+import Control.Monad.Except (liftIO, throwError)
 import qualified DB
-import Data.Semigroup ((<>))
-import Data.Text (Text, pack, unpack)
-import Options.Applicative
-import qualified Options.Applicative.Help as OH
-import qualified Pretty
-import qualified System.Directory as DIR
-import System.Exit
-import System.IO
-import Text.Printf (printf)
+import Data.Text (Text, append)
+import Exceptions (Error (BadInput, DoesNotExist), Exception)
+import qualified Exceptions as EX
+import System.IO (Handle)
 import qualified Types as T
 
-runFSM :: IO ()
-runFSM = customExecParser p generateArgsInfo >>= parseOptions
-  where
-    p = prefs (showHelpOnEmpty <> disambiguate)
+addEntry :: T.Entry -> DB.Context -> Exception IO ()
+addEntry entry db_ctx = checkFileNotExists entry db_ctx >> liftIO (DB.insert entry db_ctx)
 
-data ArgsResult
-  = ArgsResult Command (Maybe Text) (Maybe Text)
-
-data ShelfArgs
-  = AddShelf Text
-  | RemoveShelf Text Bool
-  | ListShelves
-  | RenameShelf Text Text
-
-data Command
-  = AddCmd Text Text
-  | List Bool (Maybe Text)
-  | Remove Text Bool
-  | ShelfCmd ShelfArgs
-  | CopyCmd Text Text Text
-  | MoveCmd Text Text Text
-  | RenameCmd Text Text
-  | VersionCmd
-
-add_opts :: Parser Command
-add_opts =
-  AddCmd
-    <$> argument str (metavar "Path")
-    <*> strOption
-      ( long "name"
-          <> short 'n'
-          <> help "Set name for a new or changed target"
-      )
-
-generate_parse_info :: Parser Command
-generate_parse_info = parse_details --"Shelve your files to refer to them quickly later"
-  where
-    parse_details =
-      (subparser . foldMap cmd_info)
-        [ ("add", "Add an entry to the shelf", add_opts),
-          ("list", "List entries on the shelf", list_opts),
-          ("remove", "Remove an entry from the shelf", remove_opts),
-          ("shelves", "Operate on shelves", generateShelfOptions),
-          ("move", "Move an entry to a different shelf", moveEntryOpts),
-          ("copy", "Copy an entry to a different shelf", copyEntryOpts),
-          ("rename", "Rename an entry", renameEntryOpts),
-          ("fp", "Print entry with path, shorthand for: list --path --name <TARGET>", pathPrintOpts),
-          ("version", "Print version information", pure VersionCmd)
-        ]
-
-    pathPrintOpts =
-      (\arg -> List False (Just arg)) <$> strArgument (metavar "TARGET")
-
-    renameEntryOpts =
-      RenameCmd
-        <$> strOption (long "from" <> short 'f' <> help "Source name")
-        <*> strOption (long "to" <> short 't' <> help "Target name")
-
-    list_opts =
-      List
-        <$> switch
-          ( long "full"
-              <> help "Show full information about each entry (name, shelf, etc)"
-          )
-        <*> ( optional $
-                strOption
-                  ( long "name"
-                      <> short 'n'
-                      <> help "Show entries with matching name(s)"
-                  )
-            )
-    remove_opts =
-      Remove
-        <$> argument str (metavar "NAME") <*> noConfirmSwitch
-
-    moveCopyOpts = strOption (long "from" <> short 'f' <> help "Source shelf")
-    moveCopyOpts2 = strOption (long "to" <> short 't' <> help "Destination shelf")
-    moveCopyOpts3 = strArgument (metavar "TARGET")
-    moveEntryOpts = MoveCmd <$> moveCopyOpts <*> moveCopyOpts2 <*> moveCopyOpts3
-    copyEntryOpts = CopyCmd <$> moveCopyOpts <*> moveCopyOpts2 <*> moveCopyOpts3
-    generateShelfOptions =
-      ShelfCmd
-        <$> (subparser . foldMap cmd_info)
-          [ ("add", "Add an new shelf", shelf_add_opts),
-            ("remove", "Remove a shelf", shelf_remove_opts),
-            ("list", "List all shelves", pure ListShelves),
-            ("rename", "Rename a shelf", renameShelfOpts)
-          ]
-
-    noConfirmSwitch = switch (long "no-confirm" <> short 'y' <> help "Auto accept all confirmation dialogs")
-    shelf_add_opts =
-      AddShelf <$> strArgument (metavar "NAME")
-    shelf_remove_opts =
-      RemoveShelf <$> strArgument (metavar "NAME") <*> noConfirmSwitch
-    renameShelfOpts =
-      RenameShelf <$> strOption (long "from" <> short 'f' <> help "Source name")
-        <*> strOption (long "to" <> short 't' <> help "Target name")
-
-    info' p desc = info (helper <*> p) (fullDesc <> progDesc desc)
-    cmd_info (cmd_name, desc, parser) = command cmd_name (info' parser desc)
-
-generateArgsInfo :: ParserInfo ArgsResult
-generateArgsInfo = makeArgsInfo generate_parse_info
-
-makeArgsInfo :: Parser Command -> ParserInfo ArgsResult
-makeArgsInfo cmd = info (args <**> helper) (fullDesc <> progDesc "")
-  where
-    args = cmdArgs
-
-    cmdArgs =
-      ArgsResult
-        <$> cmd
-        <*> ( optional $
-                strOption
-                  ( long "shelf"
-                      <> help "The shelf to use"
-                  )
-            )
-        <*> ( optional $
-                strOption
-                  ( long "database-path"
-                      <> help "Path to custom database"
-                  )
-            )
-
-parseOptions :: ArgsResult -> IO ()
-parseOptions (ArgsResult cmd shelf_name db_path) = case shelf_name of
-  Just shelf -> DB.connect shelf db_path >>= \db -> checkShelfExists shelf db >> parseCommand cmd db
-  Nothing -> DB.connect DB.defaultShelfName db_path >>= parseCommand cmd
-
-parseCommand :: Command -> DB.Context -> IO ()
-parseCommand (List path_only (Just name)) ctx = DB.retrieveAllLike name ctx >>= \files -> pathsPrinter path_only files
-parseCommand (List path_only Nothing) ctx = DB.retrieveAll ctx >>= \files -> pathsPrinter path_only files
-parseCommand (AddCmd target name) ctx =
-  DB.exists (setupFile name ctx) ctx >>= \exists ->
-    if exists
-      then printf "An entry with the name '%s' already exists on this shelf" name >> exitFailure
-      else file ctx >>= \f -> DB.insert f ctx
-  where
-    file = DB.makeFile name target
-parseCommand (Remove name no_confirm) ctx = checkFileExists name ctx >> printf "Test" >> getConfirm >>= removeDecider
-  where
-    getConfirm =
-      if no_confirm
-        then return True
-        else getConfirmationYesNo "This will permanently delete this entry "
-    removeDecider remove =
-      if remove
-        then DB.removeFile name ctx
-        else return ()
-parseCommand (ShelfCmd cmd) ctx = parseShelvesCmd cmd ctx
-parseCommand (MoveCmd from to name) ctx = parseCommand (CopyCmd from to name) ctx >> DB.removeFile name (DB.changeTargetShelf (DB.ShelfName from) ctx)
-parseCommand (CopyCmd from to name) ctx =
+copyEntry :: T.Shelf -> T.Shelf -> Text -> DB.Context -> Exception IO ()
+copyEntry from to entry db_ctx =
   if from == to
-    then die "Source and destination shelves must be different"
-    else existsCheck >> ((\src -> doCopy (DB.ShelfName to) (DB.changeTargetShelf src ctx)) $ DB.ShelfName from)
+    then throwError $ BadInput "Source and destination shelves must be different"
+    else existsCheck >> (\src -> doCopy to (DB.changeTargetShelf src db_ctx)) from
   where
-    doCopy = \to src_ctx -> checkFileNotExists name (DB.changeTargetShelf to src_ctx) >> DB.copyEntryTo to name src_ctx
-    existsCheck = checkShelfExists from ctx >> checkShelfExists to ctx >> checkFileExists name ctx
-parseCommand (RenameCmd from to) ctx = existsCheck >> DB.getFiles from ctx >>= \files -> DB.rename (files !! 0) to ctx
-  where
-    existsCheck = checkFileExists from ctx
-parseCommand (VersionCmd) _ = Pretty.printVersionInfo
+    doCopy = \to src_ctx -> DB.copyEntry from to entry db_ctx
+    existsCheck = checkShelfExists from db_ctx >> checkShelfExists to db_ctx
 
-parseShelvesCmd :: ShelfArgs -> DB.Context -> IO ()
-parseShelvesCmd (AddShelf name) ctx = checkShelfNotExists name ctx >> DB.insert (DB.ShelfName name) ctx
-parseShelvesCmd (RemoveShelf name no_confirm) ctx = checkShelfExists name ctx >> getConfirm >>= removeDecider
+getAllEntries :: DB.Context -> Maybe Text -> IO [T.Entry]
+getAllEntries db_ctx (Just name_filter) = DB.retrieveAllLike name_filter db_ctx
+getAllEntries db_ctx Nothing = DB.retrieveAll db_ctx
+
+checkShelfExists :: T.Shelf -> DB.Context -> Exception IO ()
+checkShelfExists shelf db_ctx =
+  (liftIO $ DB.exists shelf db_ctx)
+    >>= \exists ->
+      if exists
+        then return ()
+        else throwError $ EX.DoesNotExist $ EX.Shelf $ getShelfName shelf
   where
-    getConfirm =
-      if no_confirm
-        then return True
-        else getConfirmationYesNo "This will permanently delete this shelf and all its entries"
-    removeDecider remove =
-      if remove
-        then DB.removeShelf name ctx
+    getShelfName (T.ShelfName n) = n
+    getShelfName (T.ShelfID _) = "Unknown"
+
+renameShelfByName :: Text -> Text -> DB.Context -> Exception IO ()
+renameShelfByName from to db_ctx = checkShelfExists shelf db_ctx >> (liftIO $ DB.rename shelf to db_ctx)
+  where
+    shelf = T.ShelfName from
+
+removeEntryByName :: Text -> DB.Context -> Exception IO ()
+removeEntryByName entry db_ctx =
+  checkEntryExists (T.Entry entry "" (DB.target_shelf db_ctx)) db_ctx
+    >> (liftIO $ DB.removeFile entry db_ctx)
+
+renameEntryByName :: Text -> Text -> DB.Context -> Exception IO ()
+renameEntryByName from to db_ctx =
+  checkEntryExistsByName from db_ctx >> liftIO (DB.getFiles from db_ctx)
+    >>= \files -> liftIO $ DB.rename (files !! 0) to db_ctx
+
+checkEntryExistsByName :: Text -> DB.Context -> Exception IO ()
+checkEntryExistsByName entry_name ctx = checkEntryExists (T.Entry entry_name "" (DB.target_shelf ctx)) ctx
+
+checkEntryExists :: T.Entry -> DB.Context -> Exception IO ()
+checkEntryExists entry ctx =
+  (liftIO $ DB.exists entry ctx)
+    >>= \exists ->
+      if exists
+        then return ()
+        else throwError $ DoesNotExist $ EX.Entry $ T.name entry
+
+checkFileNotExists :: T.Entry -> DB.Context -> Exception IO ()
+checkFileNotExists entry ctx =
+  (liftIO $ DB.exists entry ctx)
+    >>= \exists ->
+      if exists
+        then throwError $ EX.NamingConflict $ EX.Entry (T.name entry)
         else return ()
-parseShelvesCmd (ListShelves) ctx = DB.getAllShelfNames ctx >>= Pretty.printList
-parseShelvesCmd (RenameShelf from to) ctx = existsCheck >> DB.rename (DB.ShelfName from) to ctx
+
+checkShelfNotExists :: T.Shelf -> DB.Context -> Exception IO ()
+checkShelfNotExists shelf ctx =
+  (liftIO $ DB.exists shelf ctx)
+    >>= \exists ->
+      if exists
+        then throwError $ EX.NamingConflict $ EX.Shelf $ shelfDecider shelf
+        else return ()
   where
-    existsCheck = checkShelfExists from ctx
+    shelfDecider (T.ShelfName n) = n
+    shelfDecider (T.ShelfID _) = "Unknown"
 
-extractPaths :: [T.Entry] -> [Text]
-extractPaths files = map (\f -> DB.path f) files
-
-pathsPrinter :: Bool -> [T.Entry] -> IO ()
-pathsPrinter False files = Pretty.printList $ extractPaths files
-pathsPrinter True files = Pretty.printList files
-
-getConfirmationYesNo :: Text -> IO Bool
-getConfirmationYesNo prompt = printf "%s are you sure? [y/n]: " prompt >> hFlush stdout >> getLine >>= checkLine
-  where
-    checkLine "yes" = return True
-    checkLine "y" = return True
-    checkLine "no" = return False
-    checkLine "n" = return False
-    checkLine _ = putStrLn "Please enter y or n" >> getConfirmationYesNo prompt
+addShelf :: T.Shelf -> DB.Context -> Exception IO ()
+addShelf shelf db_ctx = checkShelfNotExists shelf db_ctx >> (liftIO $ DB.insert shelf db_ctx)
 
 setupFile :: Text -> DB.Context -> T.Entry
 setupFile name ctx = T.Entry name "" (DB.target_shelf ctx)
 
-checkShelfExists :: Text -> DB.Context -> IO ()
-checkShelfExists name ctx =
-  DB.exists (DB.ShelfName name) ctx
-    >>= \exists ->
-      if exists
-        then return ()
-        else printf "Shelf '%s' does not exist" name >> exitFailure
+connectToDb :: Maybe T.Shelf -> Maybe Text -> Exception IO DB.Context
+connectToDb (Just shelf@(T.ShelfName shelf_name)) db_path = liftIO (DB.connect shelf_name db_path) >>= \db -> checkShelfExists shelf db >> return db
+connectToDb Nothing db_path = liftIO $ DB.connect DB.defaultShelfName db_path
 
-checkFileExists :: Text -> DB.Context -> IO ()
-checkFileExists name ctx =
-  DB.exists (setupFile name ctx) ctx
-    >>= \exists ->
-      if exists
-        then return ()
-        else printf "Entry '%s' does not exist (are you on the right shelf?)" name >> exitFailure
-
-checkFileNotExists :: Text -> DB.Context -> IO ()
-checkFileNotExists name ctx =
-  DB.exists (setupFile name ctx) ctx
-    >>= \exists ->
-      if exists
-        then printf "Entry '%s' already exists on that shelf" name >> exitFailure
-        else return ()
-
-checkShelfNotExists :: Text -> DB.Context -> IO ()
-checkShelfNotExists name ctx =
-  DB.exists (DB.ShelfName name) ctx
-    >>= \exists ->
-      if exists
-        then printf "Shelf '%s' already exists" name >> exitFailure
-        else return ()
+moveEntryByName :: Text -> Text -> Text -> DB.Context -> Exception IO ()
+moveEntryByName from to name ctx = copyEntry (T.ShelfName from) (T.ShelfName to) name ctx >> FSM.removeEntryByName name ctx

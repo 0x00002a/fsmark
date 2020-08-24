@@ -16,6 +16,7 @@
 -- along with file-shelf.  If not, see <http://www.gnu.org/licenses/>.
 {-# LANGUAGE OverloadedStrings #-}
 
+import Control.Monad.Except (liftIO, runExceptT)
 import DB
   ( defaultShelfId,
     defaultShelfName,
@@ -23,7 +24,9 @@ import DB
   )
 import qualified DB
 import Data.Text (Text)
+import qualified Exceptions as EX
 import qualified FSM as L
+import qualified Frontend as F
 import Test.HUnit
 import TestsDB (resetDb, testDb)
 import qualified Types as T
@@ -34,45 +37,54 @@ assertDBItemExists entry ctx = assertBool "Database entry exists" =<< DB.exists 
 assertNotDBItemExists :: (DB.DBObject a) => a -> DB.Context -> IO ()
 assertNotDBItemExists entry ctx = (\exists -> assertBool "Database entry does not exist" (not exists)) =<< DB.exists entry ctx
 
+printExcept :: Either EX.Error b -> IO Bool
+printExcept either = case either of
+  Right _ -> return True
+  Left err -> EX.printError err >> return False
+
+assertNoErr :: EX.Exception IO () -> IO ()
+assertNoErr except = runExceptT except >>= \either_except -> printExcept either_except >>= assertBool "Check for exception"
+
 createShelf :: Text -> DB.Context -> IO DB.Shelf
 createShelf name db = (\shelf -> DB.insert shelf db >> return shelf) (DB.ShelfName name)
 
 createEntry :: Text -> DB.Shelf -> DB.Context -> IO T.Entry
 createEntry name shelf db = (\file -> DB.insert file db >> return file) (T.Entry name "" shelf)
 
-addEntryTest = TestCase (testDb >>= (\db -> L.parseCommand (L.AddCmd "." "test1") db >> assertDBItemExists (T.Entry "test1" "" DB.dummyShelf) db))
+addEntryTest = TestCase (testDb >>= (\db -> assertNoErr $ L.addEntry (T.Entry "test1" "." (DB.target_shelf db)) db >> (liftIO $ assertDBItemExists (T.Entry "test1" "" DB.dummyShelf) db)))
 
-addShelfTest = TestCase (testDb >>= (\db -> L.parseShelvesCmd (L.AddShelf "test-shelf") db >> assertDBItemExists (DB.ShelfName "test-shelf") db))
+addShelfTest = TestCase (testDb >>= (\db -> assertNoErr $ L.addShelf (T.ShelfName "test-shelf") db >> (liftIO $ assertDBItemExists (DB.ShelfName "test-shelf") db)))
 
 getShelfIdTest = TestCase (testDb >>= (\db -> createShelf "idShelfTest" db >>= \shelf -> DB.dbId shelf db >> assertDBItemExists shelf db))
 
-removeDefaultTest = TestCase (testDb >>= \db -> L.parseShelvesCmd (L.RemoveShelf "default" True) db >> checkNotRemoved db)
+removeDefaultTest = TestCase (testDb >>= \db -> assertNoErr $ F.parseShelvesCmd (F.RemoveShelf "default" True) db >> checkNotRemoved db)
   where
-    checkNotRemoved = \db -> assertDBItemExists (DB.defaultShelf) db
+    checkNotRemoved = \db -> liftIO $ assertDBItemExists (DB.defaultShelf) db
 
-addRemoveShelfTest = TestCase (testDb >>= (\db -> createShelf db >> rmShelf db >> doAssert db))
+addRemoveShelfTest = TestCase (testDb >>= (\db -> assertNoErr $ createShelf db >> rmShelf db >> doAssert db))
   where
-    createShelf = L.parseShelvesCmd (L.AddShelf "test-shelf2")
-    rmShelf = L.parseShelvesCmd (L.RemoveShelf "test-shelf2" True)
-    doAssert = assertNotDBItemExists (DB.ShelfName "test-shelf2")
+    createShelf db = L.addShelf (T.ShelfName "test-shelf2") db
+    rmShelf db = F.parseShelvesCmd (F.RemoveShelf "test-shelf2" True) db
+    doAssert db = liftIO $ assertNotDBItemExists (DB.ShelfName "test-shelf2") db
 
 dbCopyEntryTest = TestCase (testDb >>= (\db -> createEntry "copyDbTest" DB.defaultShelf db >>= \entry -> createShelf "copyToDbShelf" db >>= \shelf -> DB.copyEntryTo shelf (DB.name entry) db >> assertDBItemExists entry db))
 
 copyEntryTest = TestCase (testDb >>= (\db -> createEntry "copyTest" DB.defaultShelf db >>= \entry -> createShelf "copyToShelf" db >>= \shelf -> setupAndTest entry shelf db))
   where
-    setupAndTest = \entry shelf db -> doCopy (DB.name entry) shelf db >> assertDBItemExists entry db
-    doCopy = \entry_name (DB.ShelfName to_shelf) db -> L.parseCommand (L.CopyCmd DB.defaultShelfName to_shelf entry_name) db
+    setupAndTest = \entry shelf db -> doCopy (DB.name entry) shelf db >> (liftIO $ assertDBItemExists entry db)
+    doCopy = \entry_name to_shelf db -> assertNoErr $ L.copyEntry DB.defaultShelf to_shelf entry_name db
 
 moveEntryTest = TestCase (testDb >>= (\db -> createEntry "moveTest" DB.defaultShelf db >>= \entry -> createShelf "moveToShelf" db >>= \shelf -> setupAndTest entry shelf db))
   where
-    setupAndTest = \entry shelf db -> doMove entry shelf db >> assertNotDBItemExists entry db
-    doMove = \entry (DB.ShelfName to_name) db -> L.parseCommand (L.MoveCmd DB.defaultShelfName to_name (DB.name entry)) db
+    setupAndTest = \entry shelf db -> doMove entry shelf db >> (liftIO $ assertNotDBItemExists entry db)
+    doMove = \entry (DB.ShelfName to_name) db -> assertNoErr $ L.moveEntryByName DB.defaultShelfName to_name (DB.name entry) db
 
 changeTargetShelfTest = TestCase (testDb >>= (\db -> createShelf "targetShelfTester" db >>= \shelf -> (\new_db -> assertEqual "Target and change to shelf" (DB.target_shelf new_db) shelf) (DB.changeTargetShelf shelf db)))
 
-renameEntryTest = TestCase (testDb >>= (\db -> createEntry "renameEntryTest" DB.defaultShelf db >>= \entry -> L.parseCommand (L.RenameCmd (DB.name entry) "renamedEntry") db >> assertDBItemExists (renamedFile entry) db))
+renameEntryTest = TestCase (testDb >>= (\db -> createEntry "renameEntryTest" DB.defaultShelf db >>= \entry -> doRename entry db >> (liftIO $ assertDBItemExists (renamedFile entry) db)))
   where
     renamedFile = \file -> file {DB.name = "renamedEntry"}
+    doRename entry db = assertNoErr $ L.renameEntryByName (DB.name entry) "renamedEntry" db
 
 renameShelfTest =
   TestCase
@@ -82,9 +94,10 @@ renameShelfTest =
                   >>= \shelf ->
                     createEntry "shelfRenameEntry" shelf db
                       >>= \entry ->
-                        L.parseShelvesCmd (L.RenameShelf "renameShelf" "renamedShelf") db
-                          >> assertShelfExists shelf db
-                          >> assertDBItemExists entry db
+                        assertNoErr $
+                          L.renameShelfByName "renameShelf" "renamedShelf" db
+                            >> (liftIO $ assertShelfExists shelf db)
+                            >> (liftIO $ assertDBItemExists entry db)
             )
     )
   where

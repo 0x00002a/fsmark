@@ -1,6 +1,6 @@
 module Main where
 
-import FSM
+import Frontend (runFSM)
 
 main :: IO ()
 main = runFSM

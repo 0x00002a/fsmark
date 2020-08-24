@@ -25,7 +25,7 @@ module DB
     Entry (path, name, Entry),
     Shelf (ShelfName),
     Context (target_shelf),
-    makeFile,
+    makeEntry,
     defaultShelfName,
     removeShelf,
     getAllShelfNames,
@@ -36,18 +36,22 @@ module DB
     defaultShelfId,
     dummyShelf,
     defaultShelf,
+    copyEntry,
   )
 where
 
 import Control.Monad (forM)
+import Control.Monad.Except (liftIO, throwError)
 import Data.Text (Text, append, pack, unpack)
 import qualified Data.Text as T
 import Database.SQLite.Simple
+import qualified Exceptions as EX
 import qualified Pretty
 import qualified System.Directory as DIR
 import System.FilePath ((</>))
 import Text.Printf (printf)
 import Types
+import qualified Types as T
 
 class DBObject a where
   exists :: a -> Context -> IO Bool
@@ -58,6 +62,10 @@ class DBObject a where
   rename :: a -> Text -> Context -> IO ()
   getName :: a -> Context -> IO Text
   retrieveAllLike :: Text -> Context -> IO [a]
+  insertMany :: [a] -> Context -> IO ()
+  insertMany entries ctx = withTransaction (conn ctx) doInsert
+    where
+      doInsert = mapM_ (\ent -> insert ent ctx) entries
 
 data Context = Context
   { conn :: Connection,
@@ -120,7 +128,7 @@ initDb conn False = mapM_ (\sql -> execute_ conn $ Query sql) dbTables
 initDb _ _ = return ()
 
 connect :: Text -> Maybe Text -> IO Context
-connect shelf_name connection_path =
+connect shelf connection_path =
   getPath >>= \p ->
     DIR.doesFileExist p
       >>= ( \exists ->
@@ -128,7 +136,7 @@ connect shelf_name connection_path =
                 >>= (\conn -> createContext conn <$> initAndGetShelfId exists conn)
           )
   where
-    initAndGetShelfId = \exists ctx -> initDb ctx exists >> (\id -> ShelfID id) <$> getShelfId shelf_name ctx
+    initAndGetShelfId = \exists ctx -> initDb ctx exists >> ShelfID <$> getShelfId shelf ctx
     createContext = Context
     getPath = case connection_path of
       Just p -> return $ unpack p
@@ -166,8 +174,8 @@ nestedNth n as = (\as2 -> as2 !! n) as !! n
 defaultShelfId :: Context -> IO Integer
 defaultShelfId context = nestedNth 0 <$> query_ (conn context) "SELECT id FROM shelves WHERE is_default = 1"
 
-makeFile :: Text -> Text -> Context -> IO Entry
-makeFile name path context = ctor <$> getDir
+makeEntry :: Text -> Text -> Context -> IO Entry
+makeEntry name path context = ctor <$> getDir
   where
     getDir = (\p -> pack p) <$> (DIR.makeAbsolute $ unpack path)
     ctor = \dir -> Entry name dir (target_shelf context)
@@ -185,10 +193,24 @@ changeTargetShelf :: Shelf -> Context -> Context
 changeTargetShelf shelf ctx = ctx {target_shelf = shelf}
 
 copyEntryTo :: Shelf -> Text -> Context -> IO ()
-copyEntryTo to_shelf name ctx = (\to_ctx -> DB.getFiles name ctx >>= \files -> doInsert (files !! 0) to_ctx) $ changeTargetShelf to_shelf ctx
+copyEntryTo to_shelf name ctx = (\to_ctx -> getFiles name ctx >>= \files -> doInsert (files !! 0) to_ctx) $ changeTargetShelf to_shelf ctx
   where
     fixShelf = \f to_ctx -> f {shelf_id = target_shelf to_ctx}
     doInsert = \file to_ctx -> insert (fixShelf file to_ctx) to_ctx
+
+copyEntry :: Shelf -> Shelf -> Text -> Context -> EX.Exception IO ()
+copyEntry from to entry ctx = liftIO getEntries >>= \entries -> checkUnique entries to_ctx >> liftIO (insertMany entries to_ctx)
+  where
+    getEntries = retrieveAllLike entry from_ctx :: IO [T.Entry]
+    from_ctx = changeTargetShelf from ctx
+    to_ctx = changeTargetShelf to ctx
+    checkUnique :: [T.Entry] -> Context -> EX.Exception IO ()
+    checkUnique entries ctx =
+      (liftIO (checkAllUnique entries ctx))
+        >>= \all_unique ->
+          if all_unique
+            then return ()
+            else throwError $ EX.NamingConflict $ EX.Entry entry
 
 wipeDb :: Context -> IO ()
 wipeDb ctx = execute_ (conn ctx) "DROP TABLE shelves" >> execute_ (conn ctx) "DROP TABLE files" >> initDb (conn ctx) False
@@ -213,3 +235,8 @@ formatLikeExpr = T.map repl
   where
     repl '*' = '%'
     repl ch = ch
+
+checkUnique entry ctx = not <$> DB.exists entry ctx
+
+checkAllUnique :: (DBObject a) => [a] -> Context -> IO Bool
+checkAllUnique entries ctx = mapM (\ent -> checkUnique ent ctx) entries >>= \all_unique -> return $ all (\b -> b) all_unique
