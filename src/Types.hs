@@ -4,7 +4,7 @@ module Types
   )
 where
 
-import Data.Text (Text)
+import Data.Text (Text, unpack)
 
 data Entry = Entry
   { name :: Text,
@@ -16,3 +16,6 @@ data Shelf
   = ShelfID Integer
   | ShelfName Text
   deriving (Show, Eq)
+
+instance Show Entry where
+  show f = "Name: " ++ unpack (name f) ++ "\nPath: " ++ unpack (path f)

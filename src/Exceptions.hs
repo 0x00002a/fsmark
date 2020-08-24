@@ -35,9 +35,9 @@ type Exception = ExceptT Error
 
 printError :: Error -> IO ()
 printError (BadInput msg) = putStrLn $ unpack msg
-printError (DBError msg) = printf "Database error: %s" msg
-printError (DoesNotExist e) = printf "%s does not exist" $ infoTMsg e
-printError (NamingConflict e) = printf "%s already exists" $ infoTMsg e
+printError (DBError msg) = printf "Database error: %s\n" msg
+printError (DoesNotExist e) = printf "%s does not exist\n" $ infoTMsg e
+printError (NamingConflict e) = printf "%s already exists\n" $ infoTMsg e
 
 infoTMsg (Shelf name) = "Shelf '" `append` name `append` "'"
 infoTMsg (Entry name) = "Entry '" `append` name `append` "'"

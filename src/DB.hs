@@ -22,7 +22,7 @@ module DB
     getAllFiles,
     removeFile,
     DBObject (insert, remove, retrieveAll, exists, dbId, rename, retrieveAllLike, getName),
-    Entry (path, name, Entry),
+    Entry (path, name),
     Shelf (ShelfName),
     Context (target_shelf),
     makeEntry,
@@ -104,12 +104,6 @@ instance DBObject Entry where
   retrieveAllLike name ctx = (\res -> map rsToFile res) <$> execQuery
     where
       execQuery = targetShelfId ctx >>= \id -> query (conn ctx) "SELECT name, path, shelf_id FROM files WHERE name LIKE ? AND shelf_id = ?" (formatLikeExpr name, id)
-
-instance Pretty.PrettyPrintable Entry where
-  display f = printf "######\nName: %s\nPath: %s\n" (name f) (path f)
-
-instance Show Entry where
-  show f = "Name: " ++ unpack (name f) ++ "\nPath: " ++ unpack (path f)
 
 dbPath :: IO FilePath
 dbPath = (\p -> p </> "data.db") <$> dir

@@ -171,13 +171,7 @@ parseOptions (ArgsResult cmd shelf_name db_path) = FSM.connectToDb (Just shelf) 
 
 parseCommand :: Command -> DB.Context -> EX.Exception IO ()
 parseCommand (List path_only match) ctx = liftIO $ FSM.getAllEntries ctx match >>= pathsPrinter path_only
-parseCommand (AddCmd target name) ctx = FSM.addEntry (T.Entry name target (DB.target_shelf ctx)) ctx
-{-DB.exists (setupFile name ctx) ctx >>= \exists ->
-  if exists
-    then printf "An entry with the name '%s' already exists on this shelf" name >> exitFailure
-    else file ctx >>= \f -> DB.insert f ctx
-where
-  file = DB.makeFile name target-}
+parseCommand (AddCmd target name) ctx = (liftIO $ DB.makeEntry name target ctx) >>= \entry -> FSM.addEntry entry ctx
 parseCommand (Remove name no_confirm) ctx = liftIO $ getConfirm >>= removeDecider
   where
     getConfirm =

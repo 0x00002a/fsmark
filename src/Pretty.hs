@@ -20,6 +20,7 @@ module Pretty where
 
 import Data.Text (Text, unpack)
 import Text.Printf (printf)
+import qualified Types as T
 
 class PrettyPrintable a where
   display :: a -> IO ()
@@ -27,11 +28,14 @@ class PrettyPrintable a where
 instance PrettyPrintable Text where
   display txt = putStrLn $ unpack txt
 
+instance Pretty.PrettyPrintable T.Entry where
+  display f = printf "Name: %s\nPath: %s\n\n" (T.name f) (T.path f)
+
 printList :: (PrettyPrintable a) => [a] -> IO ()
 printList = mapM_ display
 
 versionString :: Text
-versionString = "0.1.0"
+versionString = "0.2.0"
 
 printVersionInfo :: IO ()
 printVersionInfo = printf "fsm (version %s)\n" versionString
