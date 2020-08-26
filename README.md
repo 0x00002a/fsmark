@@ -1,11 +1,68 @@
-# file-shelf
-_Shelve your file paths_
+# fsmark
+
+_A bookmarker for your filesystem_
 
 ## Introduction
 
-file-shelf is a tool which provides quick access to lists ("shelves") of paths. Each path on a shelf has a name, allowing quick access to possibly long paths.
+fsmark is a tool which provides quick and easy access to potentially long path names.
 
-file-shelf is designed to have its output utilized through unix "pipes". This allows further scripts to be built up around it to do things like, automatic `cd`.
+It is designed around being easy to pipe to other processes and providing the smallest amount of typing overhead possible.
+
+It does ***not*** have a GUI and is designed for a unix-ish terminal environment. It can run on windows but is not very useful without powershell (since `cmd.exe` cannot do pipes).
+
+## Getting started
+
+The executable name for fsmark is `fsm`, which will hereafter be used when referring to fsmark.
+
+### Concepts
+
+fsm stores two types of information: entries and shelves. Each entry exists on a shelf and must have a unique name in the context of that shelf (entries can have conflicting names as long as they exist on different shelves).
+
+fsm prioritizes entries over shelves. This means that `fsm add <path> -n <name>` adds an entry to the selected shelf, while `fsm shelves add <name>` adds a new shelf. To set the selected shelf add the `--shelf <name>` option, if this option is not specified then the default shelf is used.
+
+### Basic usage
+
+A full list of the available commands can be viewed using `fsm --help`.
+
+#### Add a path to the default shelf
+
+```bash
+fsm add <path> -n <name>
+```
+
+Note: If `-n` is omitted then a dialog will be provided to choose a name for the new entry.
+
+#### Create a new shelf
+
+```bash
+fsm shelves add <name>
+```
+
+#### Add a path to a specific shelf
+
+```bash
+fsm add <path> -n name --shelf <shelf name>
+```
+
+#### Output the full path to an entry
+
+```bash
+fsm fp <name>
+```
+
+#### Output a list of all entries on a shelf
+
+```bash
+fsm list --shelf <shelf name>
+```
+
+Note: This will output all the paths of each entry, each on a separate line. To view full information about each entry (such as its name) add `-f|--full`.
+
+To narrow down the results slightly, the `-s|--search` option can be passed to filter by name:
+
+```bash
+fsm list -s anything_starting_with_this*
+```
 
 ## Examples
 
@@ -31,39 +88,24 @@ fsm add "~/mydir/super/long/path/file.txt" my_file
 cat $(fsm fp my_file)
 ```
 
-## Basic usage
+## Installing
 
-A full list of the available commands can be viewed by doing `fsm --help`, `fsm <command> --help`, etc.
+If you are on windows you can grab the installer from the [releases](https://github.com/0x00002a/fsmark/releases) page. If you are not on windows then you can build it from source.
 
-### Add a path to the default shelf
+1. Install `stack`, this should be a simple matter of typing `<your package manager> install stack`
+2. Clone this repository
+3. Run `stack install` in the root of this repository
+4. Run `fsm version` to verify that fsm has installed correctly
 
-```bash
-fsm add <path> -n <name>
-```
+## Philosophy & Design
 
-### Create a new shelf
+The central design goal of fsm was to have something which was easier to type on the command-line than a full path, and which could be used everywhere a full path could be (e.g as input to `cd`). The interface of fsm is centered around a few simple assumptions and principles:
 
-```bash
-fsm shelves add <name>
-```
+1. Output is assumed to be used as input into another process unless otherwise specified
+2. Path information should be the default require the least typing/effort on the part of the user
+3. "Human output" should be available but not default
 
-### Add a path to a specific shelf
-
-```bash
-fsm add <path> -n name --shelf <shelf name>
-```
-
-### Output the full path to an entry
-
-```bash
-fsm fp <name>
-```
-
-### Output a list of all entries on a shelf
-
-```bash
-fsm list --shelf <shelf name>
-```
+An example of these design principles in the interface is the `list` command: by default, it outputs raw path information which can be fed to `xargs` or similar; viewing information such as the names for each entry is a separate switch.
 
 ## License
 
@@ -83,4 +125,3 @@ GNU General Public License for more details.
 >
 >You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
-

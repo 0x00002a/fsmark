@@ -1,6 +1,6 @@
 module Main where
 
-import Lib
+import Frontend (runFSM)
 
 main :: IO ()
-main = someFunc
+main = runFSM

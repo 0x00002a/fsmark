@@ -1,5 +1,5 @@
-name:                file-shelf
-version:             0.1.0.0
+name:                fsmark
+version:             0.3.0.0
 github:              "0x00002a/file-shelf"
 license:             GPL-3
 author:              "Natasha England-Elbro"
@@ -9,7 +9,6 @@ copyright:           "2020 Natasha England-Elbro"
 extra-source-files:
 - README.md
 - LICENSE
-- ChangeLog.md
 
 # Metadata used when publishing your package
 # synopsis:            Short description of your package
@@ -28,12 +27,15 @@ dependencies:
 - path
 - directory
 - filepath
+- aeson
+- bytestring
+- mtl
 
 library:
   source-dirs: src
 
 executables:
-  file-shelf-exe:
+  fsm:
     main:                Main.hs
     source-dirs:         app
     ghc-options:
@@ -41,10 +43,10 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - file-shelf
+    - fsmark
 
 tests:
-  file-shelf-test:
+  fsm-test:
     main:                Spec.hs
     source-dirs:         test
     ghc-options:
@@ -52,5 +54,5 @@ tests:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - file-shelf
+    - fsmark
     - HUnit
