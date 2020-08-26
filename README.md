@@ -14,8 +14,6 @@ It does ***not*** have a GUI and is designed for a unix-ish terminal environment
 
 The executable name for fsmark is `fsm`, which will hereafter be used when referring to fsmark.
 
-First [install](#installing) fsm. If you are on windows you may also need to add it to the path.
-
 ### Concepts
 
 fsm stores two types of information: entries and shelves. Each entry exists on a shelf and must have a unique name in the context of that shelf (entries can have conflicting names as long as they exist on different shelves).
@@ -90,7 +88,7 @@ cat $(fsm fp my_file)
 
 ## Installing
 
-If you are on windows you can grab the installer from the [releases](https://github.com/0x00002a/file-shelf/releases) page. If you are not on windows then you can build it from source.
+If you are on windows you can grab the installer from the [releases](https://github.com/0x00002a/fsmark/releases) page. If you are not on windows then you can build it from source.
 
 1. Install `stack`, this should be a simple matter of typing `<your package manager> install stack`
 2. Clone this repository
