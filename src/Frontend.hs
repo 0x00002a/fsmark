@@ -83,7 +83,7 @@ generate_parse_info = parse_details --"Shelve your files to refer to them quickl
           ("move", "Move an entry to a different shelf", moveEntryOpts),
           ("copy", "Copy an entry to a different shelf", copyEntryOpts),
           ("rename", "Rename an entry", renameEntryOpts),
-          ("fp", "Print entry with path, shorthand for: list --path --name <TARGET>", pathPrintOpts),
+          ("fp", "Print the full path for an entry", pathPrintOpts),
           ("version", "Print version information", pure VersionCmd),
           ("license", "Print license information", pure ViewLicenseCmd)
         ]

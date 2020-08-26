@@ -30,6 +30,8 @@ A full list of the available commands can be viewed using `fsm --help`.
 fsm add <path> -n <name>
 ```
 
+Note: If `-n` is omitted then a dialog will be provided to choose a name for the new entry.
+
 #### Create a new shelf
 
 ```bash
@@ -59,7 +61,7 @@ Note: This will output all the paths of each entry, each on a separate line. To 
 To narrow down the results slightly, the `-s|--search` option can be passed to filter by name:
 
 ```bash
-fsm list -n anything_starting_with_this*
+fsm list -s anything_starting_with_this*
 ```
 
 ## Examples
