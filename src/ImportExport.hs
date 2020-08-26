@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 -- Copyright (C) 2020 Natasha England-Elbro
 --
 -- This file is part of file-shelf.
@@ -15,12 +16,12 @@
 -- You should have received a copy of the GNU General Public License
 -- along with file-shelf.  If not, see <http://www.gnu.org/licenses/>.
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module ImportExport
   ( Exportable (formatForExport),
     exportToHandle,
     importFromHandle,
+    importShelfFromHandleRaw,
   )
 where
 
@@ -38,14 +39,20 @@ import qualified Types as T
 
 class Exportable a where
   formatForExport :: a -> DB.Context -> IO ByteString
-  importFromText :: B.ByteString -> DB.Context -> Maybe (IO a)
+  importFromText :: B.ByteString -> DB.Context -> EX.Exception IO a
 
 instance Exportable T.Shelf where
   formatForExport = J.shelfToJson
   importFromText txt db_ctx =
     J.shelfFromJson txt
-      >>= \(shelf, entries) -> return $ DB.insert shelf db_ctx >> DB.insertMany entries (dest_ctx shelf) >> return shelf
+      >>= \(shelf, entries) -> checkNotExists shelf >> (liftIO $ DB.insert shelf db_ctx >> DB.insertMany entries (dest_ctx shelf) >> return shelf)
     where
+      checkNotExists :: T.Shelf -> EX.Exception IO ()
+      checkNotExists shelf@(T.ShelfName shelf_name) =
+        liftIO (DB.exists shelf db_ctx) >>= \exists ->
+          if exists
+            then throwError $ EX.NamingConflict $ EX.Shelf shelf_name
+            else return ()
       dest_ctx shelf = DB.changeTargetShelf shelf db_ctx
 
 exportToFile :: (Exportable a) => a -> DB.Context -> FilePath -> IO ()
@@ -57,8 +64,7 @@ exportToHandle target ctx handle = formatForExport target ctx >>= B.hPut handle
 importFromHandle :: (Exportable a) => Handle -> DB.Context -> EX.Exception IO a
 importFromHandle handle db_ctx =
   liftIO (B.hGetContents handle)
-    >>= \content -> checkException $ importFromText content db_ctx
-  where
-    checkException :: Maybe (IO a) -> EX.Exception IO a
-    checkException (Just ia) = liftIO $ ia
-    checkException Nothing = throwError $ EX.BadInput "Input is not a valid shelf"
+    >>= \content -> importFromText content db_ctx
+
+importShelfFromHandleRaw :: Handle -> EX.Exception IO (T.Shelf, [T.Entry])
+importShelfFromHandleRaw handle = liftIO (B.hGetContents handle) >>= J.shelfFromJson

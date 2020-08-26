@@ -23,10 +23,12 @@ module Json
   )
 where
 
+import Control.Monad.Except (throwError)
 import qualified DB (Context, getName, retrieveAll)
 import Data.Aeson
 import Data.ByteString.Lazy (ByteString)
 import Data.Text (Text)
+import qualified Exceptions as EX
 import qualified Types as T
 
 data Shelf = Shelf Text [Entry]
@@ -48,6 +50,8 @@ instance ToJSON Shelf where
 instance FromJSON Shelf where
   parseJSON = withObject "Shelf" $ \v ->
     Shelf <$> v .: "name" <*> v .: "entries"
+
+type JShelf = (T.Shelf, [T.Entry])
 
 makeJEntry tent = Entry (T.name tent) (T.path tent)
 
@@ -71,5 +75,12 @@ entryToJson entry = encode $ makeJEntry entry
 shelfToJson :: T.Shelf -> DB.Context -> IO ByteString
 shelfToJson shelf ctx = encode <$> makeJShelf shelf ctx
 
-shelfFromJson :: ByteString -> Maybe (T.Shelf, [T.Entry])
-shelfFromJson j_str = decode j_str >>= \shelf -> return $ toInternalShelf shelf
+shelfFromJson :: ByteString -> EX.Exception IO (T.Shelf, [T.Entry])
+shelfFromJson j_str = doDecode $ decode j_str
+  where
+    doDecode :: Maybe Shelf -> EX.Exception IO JShelf
+    doDecode mshelf = handleErr mshelf >>= \shelf -> return $ toInternalShelf shelf
+
+    handleErr :: Maybe a -> EX.Exception IO a
+    handleErr Nothing = throwError $ EX.BadInput ""
+    handleErr (Just f) = return f

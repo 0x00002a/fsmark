@@ -24,6 +24,7 @@ import Data.Text (Text, append, pack)
 import Exceptions (Error (BadInput, DoesNotExist), Exception)
 import qualified Exceptions as EX
 import qualified ImportExport as IE
+import qualified Json as J
 import qualified System.Directory as DIR
 import qualified System.FilePath as FP
 import System.IO
@@ -133,6 +134,11 @@ getInputHandle (Just "-") = return stdin
 getInputHandle (Just fp) = openFile fp ReadMode
 getInputHandle Nothing = return stdin
 
+withInputHandle :: Maybe FilePath -> (Handle -> IO r) -> IO r
+withInputHandle (Just "-") act = act stdin
+withInputHandle (Just fp) act = withFile fp ReadMode act
+withInputHandle Nothing act = act stdin
+
 exportShelf :: T.Shelf -> DB.Context -> Maybe FilePath -> Exception IO ()
 exportShelf shelf db_ctx output_path = checkExists >> doExport
   where
@@ -142,9 +148,7 @@ exportShelf shelf db_ctx output_path = checkExists >> doExport
 importShelf :: Maybe FilePath -> DB.Context -> Exception IO ()
 importShelf fp db_ctx =
   (liftIO $ getInputHandle fp)
-    >>= \file ->
-      (IE.importFromHandle file db_ctx :: Exception IO T.Shelf)
-        >> (liftIO $ hClose file)
+    >>= \file -> (IE.importFromHandle file db_ctx :: Exception IO T.Shelf) >> return ()
 
 nameForPath :: FilePath -> IO Text
 nameForPath path = pack <$> FP.takeFileName <$> DIR.makeAbsolute path
@@ -164,3 +168,22 @@ entryNameFromPathIfUnique path db_ctx = getName >>= checkUnique
       if not exists
         then Just name
         else Nothing
+
+connectToDbWithTmpShelf :: Maybe FilePath -> EX.Exception IO DB.Context
+connectToDbWithTmpShelf path = liftIO (getInputHandle path) >>= doImport
+  where
+    doImport handle = IE.importShelfFromHandleRaw handle >>= doConnect
+
+    doConnect :: (T.Shelf, [T.Entry]) -> EX.Exception IO DB.Context
+    doConnect raw_shelf@(shelf, entries) =
+      connectToDb (Just shelf) (Just ":memory:")
+        >>= \db -> liftIO $ insertEntries raw_shelf db >> return db
+
+insertEntries :: (T.Shelf, [T.Entry]) -> DB.Context -> IO ()
+insertEntries (shelf, entries) db_ctx = maybeInsertShelf >> DB.insertMany entries db_ctx
+  where
+    maybeInsertShelf =
+      DB.exists shelf db_ctx >>= \exists ->
+        if (not exists)
+          then DB.insert shelf db_ctx
+          else return ()

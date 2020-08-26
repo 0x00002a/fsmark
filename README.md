@@ -1,16 +1,20 @@
-# FSM
+# fsmark
 
-_File Shelving Manager_
+_A bookmarker for your filesystem_
 
 ## Introduction
 
-fsm is a tool which provides quick access to lists ("shelves") of paths. Each path on a shelf has a name, allowing quick access to possibly long paths.
+fsmark is a tool which provides quick and easy access to potentially long path names.
 
-fsm is designed to have its output utilized through unix pipes. This allows further scripts to be built up around it. For this reason it doesn't really work when using `cmd.exe`, however it does work when using powershell (and I find it very useful for windows paths).
+It is designed around being easy to pipe to other processes and providing the smallest amount of typing overhead possible.
+
+It does ***not*** have a GUI and is designed for a unix-ish terminal environment. It can run on windows but is not very useful without powershell (since `cmd.exe` cannot do pipes).
 
 ## Getting started
 
-First [install](#installing) `fsm`. If you are on windows you may also need to add it to the path.
+The executable name for fsmark is `fsm`, which will hereafter be used when referring to fsmark.
+
+First [install](#installing) fsm. If you are on windows you may also need to add it to the path.
 
 ### Concepts
 
@@ -52,9 +56,9 @@ fsm fp <name>
 fsm list --shelf <shelf name>
 ```
 
-Note: This will output all the paths of each entry, each on a seperate line. To view full information about each entry (such as its name) add `--full`.
+Note: This will output all the paths of each entry, each on a separate line. To view full information about each entry (such as its name) add `-f|--full`.
 
-To narrow down the results slightly, the `-n|--name` option can be passed to filter by name:
+To narrow down the results slightly, the `-s|--search` option can be passed to filter by name:
 
 ```bash
 fsm list -n anything_starting_with_this*
@@ -95,12 +99,13 @@ If you are on windows you can grab the installer from the [releases](https://git
 
 ## Philosophy & Design
 
-The central design goal of fsm was to have something which was easier to type on the command-line than a full path. For this reason the interface of fsm is centered around two things:
+The central design goal of fsm was to have something which was easier to type on the command-line than a full path, and which could be used everywhere a full path could be (e.g as input to `cd`). The interface of fsm is centered around a few simple assumptions and principles:
 
-1. The expectation that its output will be processed by another program, most of the time.
-2. Path information should be the default output mode and require the least typing
+1. Output is assumed to be used as input into another process unless otherwise specified
+2. Path information should be the default require the least typing/effort on the part of the user
+3. "Human output" should be available but not default
 
-As an example there is the `list` command, by default it outputs raw path information which can be fed to `xargs` or similar - requiring a flag to switch to human-readable results.
+An example of these design principles in the interface is the `list` command: by default, it outputs raw path information which can be fed to `xargs` or similar; viewing information such as the names for each entry is a separate switch.
 
 ## License
 
@@ -120,4 +125,3 @@ GNU General Public License for more details.
 >
 >You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
-

@@ -43,7 +43,11 @@ handleErrorsT :: EX.Exception IO a -> IO ()
 handleErrorsT err = runExceptT err >>= handleErrors
 
 data ArgsResult
-  = ArgsResult Command (Maybe Text) (Maybe Text)
+  = ArgsResult Command (Maybe TargetShelfArg) (Maybe Text)
+
+data TargetShelfArg
+  = StoredShelf Text
+  | HotLoadedShelf FilePath
 
 data ShelfArgs
   = AddShelf Text
@@ -65,21 +69,23 @@ data Command
   | VersionCmd
   | ConfigCmd
   | HelpCmd
+  | ViewLicenseCmd
 
 generate_parse_info :: Parser Command
 generate_parse_info = parse_details --"Shelve your files to refer to them quickly later"
   where
     parse_details =
       (subparser . foldMap cmd_info)
-        [ ("add", "Add an entry to the shelf", add_opts),
-          ("list", "List entries on the shelf", list_opts),
-          ("remove", "Remove an entry from the shelf", remove_opts),
+        [ ("add", "Add an entry to the current shelf", add_opts),
+          ("list", "List entries on the current shelf", list_opts),
+          ("remove", "Remove an entry from the current shelf", remove_opts),
           ("shelves", "Operate on shelves", generateShelfOptions),
           ("move", "Move an entry to a different shelf", moveEntryOpts),
           ("copy", "Copy an entry to a different shelf", copyEntryOpts),
           ("rename", "Rename an entry", renameEntryOpts),
           ("fp", "Print entry with path, shorthand for: list --path --name <TARGET>", pathPrintOpts),
-          ("version", "Print version information", pure VersionCmd)
+          ("version", "Print version information", pure VersionCmd),
+          ("license", "Print license information", pure ViewLicenseCmd)
         ]
 
     pathPrintOpts =
@@ -97,13 +103,13 @@ generate_parse_info = parse_details --"Shelve your files to refer to them quickl
         <$> switch
           ( long "full"
               <> short 'f'
-              <> help "Show full information about each entry (name, shelf, etc)"
+              <> help "Show full information about each entry (name, path, etc)"
           )
         <*> ( optional $
                 strOption
-                  ( long "name"
-                      <> short 'n'
-                      <> help "Show entries with matching name(s)"
+                  ( long "search"
+                      <> short 's'
+                      <> help "Filter results by a search term. Understands [%|*] as wildcard, i.e name* or name% will match anything starting with name, %name% or *name* will matching anything containing name"
                   )
             )
     remove_opts =
@@ -153,21 +159,19 @@ generate_parse_info = parse_details --"Shelve your files to refer to them quickl
 generateArgsInfo :: ParserInfo ArgsResult
 generateArgsInfo = makeArgsInfo generate_parse_info
 
+fsmDesc =
+  progDesc "A bookmarking system for your filesystem"
+    <> footer "'fsm <command> --help' can be used to view more specific help for each command"
+
 makeArgsInfo :: Parser Command -> ParserInfo ArgsResult
-makeArgsInfo cmd = info (args <**> helper) (fullDesc <> progDesc "")
+makeArgsInfo cmd = info (args <**> helper) (fullDesc <> fsmDesc)
   where
     args = cmdArgs
 
     cmdArgs =
       ArgsResult
         <$> cmd
-        <*> ( optional $
-                strOption
-                  ( long "shelf"
-                      <> short 's'
-                      <> help "The shelf to use"
-                  )
-            )
+        <*> (optional $ internalShelfArg)
         <*> ( optional $
                 strOption
                   ( long "database"
@@ -175,12 +179,27 @@ makeArgsInfo cmd = info (args <**> helper) (fullDesc <> progDesc "")
                   )
             )
 
+    internalShelfArg =
+      StoredShelf
+        <$> strOption
+          ( long "shelf"
+              <> short 's'
+              <> help "The shelf to use"
+          )
+    hotLoadedShelfArg =
+      HotLoadedShelf
+        <$> strOption
+          ( long "shelf-from"
+              <> help "Load a shelf temporarily from exported JSON"
+          )
+
 parseOptions :: ArgsResult -> EX.Exception IO ()
-parseOptions (ArgsResult cmd shelf_name db_path) = FSM.connectToDb (Just shelf) db_path >>= parseCommand cmd
-  where
-    shelf = case shelf_name of
-      Just name -> T.ShelfName name
-      Nothing -> DB.defaultShelf
+parseOptions (ArgsResult cmd tshelf db_path) = parseTargetShelf db_path tshelf >>= parseCommand cmd
+
+parseTargetShelf :: Maybe Text -> Maybe TargetShelfArg -> EX.Exception IO DB.Context
+parseTargetShelf db_path (Just (StoredShelf name)) = FSM.connectToDb (Just (T.ShelfName name)) db_path
+parseTargetShelf _ (Just (HotLoadedShelf path)) = FSM.connectToDbWithTmpShelf (Just path)
+parseTargetShelf db_path Nothing = FSM.connectToDb Nothing db_path
 
 parseCommand :: Command -> DB.Context -> EX.Exception IO ()
 parseCommand (List path_only match) ctx = liftIO $ FSM.getAllEntries ctx match >>= pathsPrinter path_only
@@ -217,6 +236,7 @@ parseCommand (MoveCmd from to name) ctx = FSM.moveEntryByName from to name ctx
 parseCommand (CopyCmd from to name) ctx = FSM.copyEntry (T.ShelfName from) (T.ShelfName to) name ctx
 parseCommand (RenameCmd from to) ctx = FSM.renameEntryByName from to ctx
 parseCommand (VersionCmd) _ = liftIO Pretty.printVersionInfo
+parseCommand (ViewLicenseCmd) _ = liftIO Pretty.printLicense
 
 parseShelvesCmd :: ShelfArgs -> DB.Context -> EX.Exception IO ()
 parseShelvesCmd (AddShelf name) ctx = FSM.addShelf (T.ShelfName name) ctx
