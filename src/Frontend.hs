@@ -18,7 +18,7 @@
 
 module Frontend where
 
-import Control.Monad.Except (catchError, liftIO, runExceptT)
+import Control.Monad.Except (catchError, liftIO, runExceptT, throwError)
 import qualified DB
 import Data.Text (Text, append, pack, unpack)
 import qualified Exceptions as EX
@@ -39,6 +39,9 @@ handleErrors err = case err of
   Left err -> EX.printError err
   Right _ -> return ()
 
+handleErrorsT :: EX.Exception IO a -> IO ()
+handleErrorsT err = runExceptT err >>= handleErrors
+
 data ArgsResult
   = ArgsResult Command (Maybe Text) (Maybe Text)
 
@@ -49,9 +52,10 @@ data ShelfArgs
   | RenameShelf Text Text
   | ExportShelf (Maybe FilePath)
   | ImportShelf (Maybe FilePath)
+  | ShelvesHelp Command
 
 data Command
-  = AddCmd Text Text
+  = AddCmd FilePath (Maybe Text) Bool
   | List Bool (Maybe Text)
   | Remove Text Bool
   | ShelfCmd ShelfArgs
@@ -60,16 +64,7 @@ data Command
   | RenameCmd Text Text
   | VersionCmd
   | ConfigCmd
-
-add_opts :: Parser Command
-add_opts =
-  AddCmd
-    <$> argument str (metavar "Path")
-    <*> strOption
-      ( long "name"
-          <> short 'n'
-          <> help "Set name for a new or changed target"
-      )
+  | HelpCmd
 
 generate_parse_info :: Parser Command
 generate_parse_info = parse_details --"Shelve your files to refer to them quickly later"
@@ -90,15 +85,18 @@ generate_parse_info = parse_details --"Shelve your files to refer to them quickl
     pathPrintOpts =
       (\arg -> List False (Just arg)) <$> strArgument (metavar "TARGET")
 
-    renameEntryOpts =
-      RenameCmd
-        <$> strOption (long "from" <> short 'f' <> help "Source name")
-        <*> strOption (long "to" <> short 't' <> help "Target name")
+    renameEntryOpts = fromToOpts RenameCmd
+
+    fromToOpts target = target <$> fromArg <*> toArg
+      where
+        fromArg = strOption (long "from" <> short 'f' <> help "Source name" <> metavar "SOURCE")
+        toArg = strOption (long "to" <> short 't' <> help "Target name" <> metavar "TARGET")
 
     list_opts =
       List
         <$> switch
           ( long "full"
+              <> short 'f'
               <> help "Show full information about each entry (name, shelf, etc)"
           )
         <*> ( optional $
@@ -112,11 +110,22 @@ generate_parse_info = parse_details --"Shelve your files to refer to them quickl
       Remove
         <$> argument str (metavar "NAME") <*> noConfirmSwitch
 
-    moveCopyOpts = strOption (long "from" <> short 'f' <> help "Source shelf")
-    moveCopyOpts2 = strOption (long "to" <> short 't' <> help "Destination shelf")
-    moveCopyOpts3 = strArgument (metavar "TARGET")
-    moveEntryOpts = MoveCmd <$> moveCopyOpts <*> moveCopyOpts2 <*> moveCopyOpts3
-    copyEntryOpts = CopyCmd <$> moveCopyOpts <*> moveCopyOpts2 <*> moveCopyOpts3
+    add_opts =
+      AddCmd
+        <$> argument str (metavar "PATH")
+        <*> ( optional $
+                strOption
+                  ( long "name"
+                      <> short 'n'
+                      <> help "Set a name for the target (removes name confirmation dialog)"
+                  )
+            )
+        <*> noConfirmSwitch
+
+    targetArg = strArgument (metavar "ENTRY NAME")
+    moveEntryOpts = fromToOpts MoveCmd <*> targetArg
+    copyEntryOpts = fromToOpts CopyCmd <*> targetArg
+    generateShelfOptions :: Parser Command
     generateShelfOptions =
       ShelfCmd
         <$> (subparser . foldMap cmd_info)
@@ -124,8 +133,8 @@ generate_parse_info = parse_details --"Shelve your files to refer to them quickl
             ("remove", "Remove a shelf", shelf_remove_opts),
             ("list", "List all shelves", pure ListShelves),
             ("rename", "Rename a shelf", renameShelfOpts),
-            ("import", "Import a shelf from a file", ImportShelf <$> optionalFilePathArg),
-            ("export", "export a shelf to a file", ExportShelf <$> optionalFilePathArg)
+            ("import", "Import a shelf from a file or stdin", ImportShelf <$> optionalFilePathArg),
+            ("export", "Export a shelf to a file or stdout", ExportShelf <$> optionalFilePathArg)
           ]
 
     filePathArg = strArgument (metavar "FILE")
@@ -136,9 +145,7 @@ generate_parse_info = parse_details --"Shelve your files to refer to them quickl
       AddShelf <$> strArgument (metavar "NAME")
     shelf_remove_opts =
       RemoveShelf <$> strArgument (metavar "NAME") <*> noConfirmSwitch
-    renameShelfOpts =
-      RenameShelf <$> strOption (long "from" <> short 'f' <> help "Source name")
-        <*> strOption (long "to" <> short 't' <> help "Target name")
+    renameShelfOpts = fromToOpts RenameShelf
 
     info' p desc = info (helper <*> p) (fullDesc <> progDesc desc)
     cmd_info (cmd_name, desc, parser) = command cmd_name (info' parser desc)
@@ -157,13 +164,14 @@ makeArgsInfo cmd = info (args <**> helper) (fullDesc <> progDesc "")
         <*> ( optional $
                 strOption
                   ( long "shelf"
+                      <> short 's'
                       <> help "The shelf to use"
                   )
             )
         <*> ( optional $
                 strOption
-                  ( long "database-path"
-                      <> help "Path to custom database"
+                  ( long "database"
+                      <> help "Path to custom database (will be created if it does not exist)"
                   )
             )
 
@@ -176,13 +184,30 @@ parseOptions (ArgsResult cmd shelf_name db_path) = FSM.connectToDb (Just shelf) 
 
 parseCommand :: Command -> DB.Context -> EX.Exception IO ()
 parseCommand (List path_only match) ctx = liftIO $ FSM.getAllEntries ctx match >>= pathsPrinter path_only
-parseCommand (AddCmd target name) ctx = (liftIO $ DB.makeEntry name target ctx) >>= \entry -> FSM.addEntry entry ctx
+parseCommand (AddCmd path chosen_name no_confirm) ctx =
+  liftIO getName
+    >>= (\name -> liftIO $ DB.makeEntry name (pack path) ctx)
+    >>= \entry -> FSM.addEntry entry ctx
+  where
+    getName = case chosen_name of
+      Just n -> return n
+      Nothing ->
+        FSM.entryNameFromPathIfUnique path ctx
+          >>= \name -> namePrompt name
+    namePrompt name =
+      (promptInput $ "Enter a name for the new entry" `append` (nameAutoComplete name))
+        >>= \input_name -> decodeName input_name name
+    nameAutoComplete (Just name) = " [" `append` name `append` "]: "
+    nameAutoComplete Nothing = ": "
+    decodeName ("") (Just name) = return name
+    decodeName ("") Nothing = putStrLn "Please enter a valid name" >> namePrompt Nothing
+    decodeName name _ = return name
 parseCommand (Remove name no_confirm) ctx = liftIO $ getConfirm >>= removeDecider
   where
     getConfirm =
       if no_confirm
         then return True
-        else getConfirmationYesNo "This will permanently delete this entry "
+        else getConfirmationYesNo "This will permanently remove this entry, are you sure?"
     removeDecider remove =
       if remove
         then DB.removeFile name ctx
@@ -200,7 +225,7 @@ parseShelvesCmd (RemoveShelf name no_confirm) ctx = liftIO $ getConfirm >>= remo
     getConfirm =
       if no_confirm
         then return True
-        else getConfirmationYesNo "This will permanently delete this shelf and all its entries"
+        else getConfirmationYesNo "This will permanently remove this shelf and all of it's entries, are you sure?"
     removeDecider remove =
       if remove
         then DB.removeShelf name ctx
@@ -218,7 +243,7 @@ pathsPrinter False files = Pretty.printList $ extractPaths files
 pathsPrinter True files = Pretty.printList files
 
 getConfirmationYesNo :: Text -> IO Bool
-getConfirmationYesNo prompt = printf "%s are you sure? [y/n]: " prompt >> hFlush stdout >> getLine >>= checkLine
+getConfirmationYesNo prompt = printf "%s [y/n]: " prompt >> hFlush stdout >> getLine >>= checkLine
   where
     checkLine "yes" = return True
     checkLine "y" = return True
@@ -228,3 +253,6 @@ getConfirmationYesNo prompt = printf "%s are you sure? [y/n]: " prompt >> hFlush
 
 setupFile :: Text -> DB.Context -> T.Entry
 setupFile name ctx = T.Entry name "" (DB.target_shelf ctx)
+
+promptInput :: Text -> IO Text
+promptInput prompt = putStr (unpack prompt) >> hFlush stdout >> getLine >>= \line -> return $ pack line

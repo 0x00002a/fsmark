@@ -35,7 +35,7 @@ printList :: (PrettyPrintable a) => [a] -> IO ()
 printList = mapM_ display
 
 versionString :: Text
-versionString = "0.2.0"
+versionString = "0.3.0"
 
 printVersionInfo :: IO ()
 printVersionInfo = printf "fsm (version %s)\n" versionString

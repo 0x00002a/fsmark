@@ -44,7 +44,9 @@ instance Exportable T.Shelf where
   formatForExport = J.shelfToJson
   importFromText txt db_ctx =
     J.shelfFromJson txt
-      >>= \(shelf, entries) -> return $ DB.insert shelf db_ctx >> DB.insertMany entries db_ctx >> return shelf
+      >>= \(shelf, entries) -> return $ DB.insert shelf db_ctx >> DB.insertMany entries (dest_ctx shelf) >> return shelf
+    where
+      dest_ctx shelf = DB.changeTargetShelf shelf db_ctx
 
 exportToFile :: (Exportable a) => a -> DB.Context -> FilePath -> IO ()
 exportToFile target ctx path = formatForExport target ctx >>= B.writeFile path

@@ -20,10 +20,12 @@ module FSM where
 
 import Control.Monad.Except (lift, liftIO, liftM, runExceptT, throwError)
 import qualified DB
-import Data.Text (Text, append)
+import Data.Text (Text, append, pack)
 import Exceptions (Error (BadInput, DoesNotExist), Exception)
 import qualified Exceptions as EX
 import qualified ImportExport as IE
+import qualified System.Directory as DIR
+import qualified System.FilePath as FP
 import System.IO
   ( FilePath,
     Handle,
@@ -124,6 +126,7 @@ moveEntryByName from to name ctx = copyEntry (T.ShelfName from) (T.ShelfName to)
 withOutputHandle :: Maybe FilePath -> (Handle -> IO r) -> IO r
 withOutputHandle (Just "-") act = act stdout
 withOutputHandle (Just fp) act = withFile fp WriteMode act
+withOutputHandle Nothing act = act stdout
 
 getInputHandle :: Maybe FilePath -> IO Handle
 getInputHandle (Just "-") = return stdin
@@ -137,4 +140,27 @@ exportShelf shelf db_ctx output_path = checkExists >> doExport
     doExport = liftIO $ withOutputHandle output_path $ IE.exportToHandle shelf db_ctx
 
 importShelf :: Maybe FilePath -> DB.Context -> Exception IO ()
-importShelf fp db_ctx = (liftIO $ getInputHandle fp) >>= \file -> (IE.importFromHandle file db_ctx :: Exception IO T.Shelf) >> (liftIO $ hClose file)
+importShelf fp db_ctx =
+  (liftIO $ getInputHandle fp)
+    >>= \file ->
+      (IE.importFromHandle file db_ctx :: Exception IO T.Shelf)
+        >> (liftIO $ hClose file)
+
+nameForPath :: FilePath -> IO Text
+nameForPath path = pack <$> FP.takeFileName <$> DIR.makeAbsolute path
+
+entryNameIsFree :: Text -> DB.Context -> IO Bool
+entryNameIsFree name db_ctx = getEntry >>= \entry -> DB.exists entry db_ctx
+  where
+    getEntry = DB.makeEntry name "" db_ctx
+
+entryNameFromPathIfUnique :: FilePath -> DB.Context -> IO (Maybe Text)
+entryNameFromPathIfUnique path db_ctx = getName >>= checkUnique
+  where
+    getName = FSM.nameForPath path
+    checkUnique name = uniqueOrNothing name <$> FSM.entryNameIsFree name db_ctx
+    uniqueOrNothing :: Text -> Bool -> Maybe Text
+    uniqueOrNothing name exists =
+      if not exists
+        then Just name
+        else Nothing

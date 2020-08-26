@@ -106,6 +106,24 @@ renameShelfTest =
 
 createEntryOnShelfTest = TestCase (testDb >>= (\db -> createShelf "createEntryShelfTest" db >>= \shelf -> createEntry "createEntryTest" shelf db >>= \entry -> assertDBItemExists entry db >> assertDBItemExists shelf db))
 
+importExportTest =
+  TestCase
+    ( testDb
+        >>= \db ->
+          assertNoErr $
+            liftIO (createShelf "exportedShelf" db)
+              >>= \shelf ->
+                liftIO (createEntry "exportedEntry" shelf db)
+                  >>= \entry ->
+                    L.exportShelf shelf db (Just "test-out.json")
+                      >> F.parseShelvesCmd (F.RemoveShelf "exportedShelf" True) db
+                      >> L.importShelf (Just "test-out.json") db
+                      >> ( liftIO $
+                             assertDBItemExists shelf db
+                               >> assertDBItemExists entry db
+                         )
+    )
+
 tests =
   TestList
     [ TestLabel "Add entry" addEntryTest,
@@ -119,7 +137,8 @@ tests =
       TestLabel "Move entry" moveEntryTest,
       TestLabel "Rename entry" renameEntryTest,
       TestLabel "Rename Shelf" renameShelfTest,
-      TestLabel "Create shelf and add entry" createEntryOnShelfTest
+      TestLabel "Create shelf and add entry" createEntryOnShelfTest,
+      TestLabel "Import and export a shelf" importExportTest
     ]
 
 main :: IO Counts

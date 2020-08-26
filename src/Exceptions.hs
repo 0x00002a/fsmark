@@ -30,6 +30,7 @@ data Error
   | DBError Text
   | DoesNotExist InfoType
   | NamingConflict InfoType
+  | NotUnique Text
 
 type Exception = ExceptT Error
 
