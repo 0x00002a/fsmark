@@ -20,7 +20,7 @@ module FSM where
 
 import Control.Monad.Except (lift, liftIO, liftM, runExceptT, throwError)
 import qualified DB
-import Data.Text (Text, append, pack)
+import Data.Text (Text, append, pack, unpack)
 import Exceptions (Error (BadInput, DoesNotExist), Exception)
 import qualified Exceptions as EX
 import qualified ImportExport as IE
@@ -73,7 +73,7 @@ renameShelfByName from to db_ctx = checkShelfExists shelf db_ctx >> (liftIO $ DB
 
 removeEntryByName :: Text -> DB.Context -> Exception IO ()
 removeEntryByName entry db_ctx =
-  checkEntryExists (T.Entry entry "" (DB.target_shelf db_ctx)) db_ctx
+  checkEntryExistsByName entry db_ctx
     >> (liftIO $ DB.removeFile entry db_ctx)
 
 removeItem :: (DB.DBObject a) => a -> DB.Context -> Exception IO ()
@@ -99,7 +99,7 @@ checkExists item db_ctx = liftIO (DB.exists item db_ctx) >>= doCheck
             >>= \name -> throwError $ EX.TextError $ name `append` " does not exist"
 
 checkEntryExistsByName :: Text -> DB.Context -> Exception IO ()
-checkEntryExistsByName entry_name ctx = checkEntryExists (T.Entry entry_name "" (DB.target_shelf ctx)) ctx
+checkEntryExistsByName entry_name ctx = liftIO (DB.makeEntry entry_name "" ctx) >>= \entry -> checkEntryExists entry ctx
 
 checkEntryExists :: T.Entry -> DB.Context -> Exception IO ()
 checkEntryExists entry ctx =
@@ -131,12 +131,24 @@ checkShelfNotExists shelf ctx =
 addShelf :: T.Shelf -> DB.Context -> Exception IO ()
 addShelf shelf db_ctx = checkShelfNotExists shelf db_ctx >> (liftIO $ DB.insert shelf db_ctx)
 
-setupFile :: Text -> DB.Context -> T.Entry
-setupFile name ctx = T.Entry name "" (DB.target_shelf ctx)
+connectToDb :: Maybe T.Shelf -> Maybe Text -> Bool -> Exception IO DB.Context
+connectToDb shelf_name db_path is_dryrun =
+  liftIO (DB.connect shelf connString connType)
+    >>= \db -> checkShelfExists shelf db >> return db
+  where
+    shelf = case shelf_name of
+      Just sh -> sh
+      Nothing -> DB.defaultShelf
+    connString = makeConnString db_path
+    connType = makeConnType is_dryrun
 
-connectToDb :: Maybe T.Shelf -> Maybe Text -> Exception IO DB.Context
-connectToDb (Just shelf@(T.ShelfName shelf_name)) db_path = liftIO (DB.connect shelf_name db_path) >>= \db -> checkShelfExists shelf db >> return db
-connectToDb Nothing db_path = liftIO $ DB.connect DB.defaultShelfName db_path
+makeConnString :: Maybe Text -> DB.ConnectionString
+makeConnString (Just ":memory:") = DB.InMemory
+makeConnString (Just path) = DB.Path $ unpack path
+makeConnString Nothing = DB.DefaultDB
+
+makeConnType True = DB.DryRun
+makeConnType False = DB.Normal
 
 moveEntryByName :: Text -> Text -> Text -> DB.Context -> Exception IO ()
 moveEntryByName from to name ctx = copyEntry (T.ShelfName from) (T.ShelfName to) name ctx >> removeEntryByName name ctx
@@ -193,7 +205,7 @@ connectToDbWithTmpShelf path = liftIO (getInputHandle path) >>= doImport
 
     doConnect :: (T.Shelf, [T.Entry]) -> EX.Exception IO DB.Context
     doConnect raw_shelf@(shelf, entries) =
-      connectToDb (Just shelf) (Just ":memory:")
+      connectToDb (Just shelf) (Just ":memory:") False
         >>= \db -> liftIO $ insertEntries raw_shelf db >> return db
 
 insertEntries :: (T.Shelf, [T.Entry]) -> DB.Context -> IO ()

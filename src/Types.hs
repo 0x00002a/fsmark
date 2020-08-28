@@ -1,10 +1,13 @@
 module Types
   ( Entry (Entry, name, path, shelf_id),
     Shelf (ShelfID, ShelfName),
+    Types.FilePath (..),
   )
 where
 
 import Data.Text (Text, unpack)
+
+newtype FilePath = FP Text
 
 data Entry = Entry
   { name :: Text,

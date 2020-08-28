@@ -27,7 +27,7 @@ import qualified DB
 testDbPath = "test.db"
 
 testDb :: IO DB.Context
-testDb = DB.connect DB.defaultShelfName (Just testDbPath)
+testDb = DB.connect DB.defaultShelf (DB.Path testDbPath) DB.Normal
 
 resetDb :: IO ()
 resetDb = testDb >>= DB.wipeDb

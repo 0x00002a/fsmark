@@ -44,12 +44,10 @@ handleErrorsT :: EX.Exception IO a -> IO ()
 handleErrorsT err = runExceptT err >>= handleErrors
 
 parseOptions :: ArgsResult -> EX.Exception IO ()
-parseOptions (ArgsResult cmd tshelf db_path) = parseTargetShelf db_path tshelf >>= parseCommand cmd
-
-parseTargetShelf :: Maybe Text -> Maybe TargetShelfArg -> EX.Exception IO DB.Context
-parseTargetShelf db_path (Just (StoredShelf name)) = FSM.connectToDb (Just (T.ShelfName name)) db_path
-parseTargetShelf _ (Just (HotLoadedShelf path)) = FSM.connectToDbWithTmpShelf (Just path)
-parseTargetShelf db_path Nothing = FSM.connectToDb Nothing db_path
+parseOptions (ArgsResult cmd tshelf db_path dry_run) = parseTargetShelf db_path tshelf dry_run >>= parseCommand cmd
+  where
+    parseTargetShelf db_path (Just (StoredShelf name)) = FSM.connectToDb (Just (T.ShelfName name)) db_path
+    parseTargetShelf db_path Nothing = FSM.connectToDb Nothing db_path
 
 parseCommand :: Command -> DB.Context -> EX.Exception IO ()
 parseCommand (List path_only match) ctx = liftIO $ FSM.getAll ctx match >>= pathsPrinter path_only
@@ -86,7 +84,7 @@ parseShelvesCmd (RemoveShelf name no_confirm) ctx = liftIO $ getConfirm >>= remo
 parseShelvesCmd (ListShelves) ctx = liftIO $ (FSM.getAll ctx Nothing :: IO [T.Shelf]) >>= Pretty.printList
 parseShelvesCmd (RenameShelf from to) ctx = FSM.renameShelfByName from to ctx
 parseShelvesCmd (ImportShelf path) ctx = FSM.importShelf path ctx
-parseShelvesCmd (ExportShelf path) ctx = FSM.exportShelf (DB.target_shelf ctx) ctx path
+parseShelvesCmd (ExportShelf name path) ctx = FSM.exportShelf (T.ShelfName name) ctx path
 
 extractPaths :: [T.Entry] -> [Text]
 extractPaths files = map (\f -> DB.path f) files
@@ -104,15 +102,12 @@ getConfirmationYesNo prompt = promptInput (prompt `append` "[y/n]: ") >>= checkL
     checkLine "n" = return False
     checkLine _ = putStrLn "Please enter y or n" >> getConfirmationYesNo prompt
 
-setupFile :: Text -> DB.Context -> T.Entry
-setupFile name ctx = T.Entry name "" (DB.target_shelf ctx)
-
 promptInput :: Text -> IO Text
 promptInput prompt = putStr (unpack prompt) >> hFlush stdout >> getLine >>= \line -> return $ pack line
 
 createEntryFromInput name path db_ctx confirm =
   liftIO getName
-    >>= (\name -> liftIO $ DB.makeEntry name (pack path) db_ctx)
+    >>= (\name -> liftIO $ DB.makeEntry name path db_ctx)
   where
     getName = case name of
       Just n -> return n

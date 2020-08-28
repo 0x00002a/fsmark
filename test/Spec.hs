@@ -51,7 +51,7 @@ createShelf name db = (\shelf -> DB.insert shelf db >> return shelf) (DB.ShelfNa
 createEntry :: Text -> DB.Shelf -> DB.Context -> IO T.Entry
 createEntry name shelf db = (\file -> DB.insert file db >> return file) (T.Entry name "" shelf)
 
-addEntryTest = TestCase (testDb >>= (\db -> assertNoErr $ FSM.addEntry (T.Entry "test1" "." (DB.target_shelf db)) db >> (liftIO $ assertDBItemExists (T.Entry "test1" "" DB.dummyShelf) db)))
+addEntryTest = TestCase (testDb >>= (\db -> assertNoErr $ FSM.addEntry (T.Entry "test1" "." DB.dummyShelf) db >> (liftIO $ assertDBItemExists (T.Entry "test1" "" DB.dummyShelf) db)))
 
 addShelfTest = TestCase (testDb >>= (\db -> assertNoErr $ FSM.addShelf (T.ShelfName "test-shelf") db >> (liftIO $ assertDBItemExists (DB.ShelfName "test-shelf") db)))
 

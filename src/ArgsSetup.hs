@@ -41,24 +41,24 @@ import Options.Applicative
     subparser,
     switch,
     (<**>),
+    (<|>),
   )
 import qualified Options.Applicative as O
 
 data ArgsResult
-  = ArgsResult Command (Maybe TargetShelfArg) (Maybe Text)
+  = ArgsResult Command (Maybe TargetShelfArg) (Maybe Text) Bool
 
 data TargetShelfArg
   = StoredShelf Text
-  | HotLoadedShelf FilePath
 
 data ShelfArgs
   = AddShelf Text
   | RemoveShelf Text Bool
   | ListShelves
   | RenameShelf Text Text
-  | ExportShelf (Maybe FilePath)
-  | ImportShelf (Maybe FilePath)
   | ShelvesHelp Command
+  | ExportShelf Text (Maybe FilePath)
+  | ImportShelf (Maybe FilePath)
 
 data Command
   = AddCmd FilePath (Maybe Text) Bool
@@ -69,7 +69,6 @@ data Command
   | MoveCmd Text Text Text
   | RenameCmd Text Text
   | VersionCmd
-  | ConfigCmd
   | HelpCmd
   | ViewLicenseCmd
 
@@ -86,44 +85,51 @@ generateSection (SubParser descs) = (subparser . foldMap cmdInfo) descs
   where
     info' p desc = O.info (helper <*> p) (O.fullDesc <> O.progDesc desc)
     cmdInfo (SubParserDesc cmd_name desc parser) = O.command (unpack cmd_name) (info' parser (unpack desc))
+    cmdInfo (SubParserGroup name) = O.commandGroup $ unpack name
 
 generateDescSubParser sections = generateSection $ SubParser $ map makeDesc sections
   where
-    makeDesc (name, desc, opts) = SubParserDesc name desc opts
+    makeDesc :: (Text, Text, Maybe (O.Parser a)) -> SubParserDesc a
+    makeDesc (name, "", Nothing) = SubParserGroup name
+    makeDesc (name, desc, (Just opts)) = SubParserDesc name desc opts
 
 shelfCommands =
   ShelfCmd
     <$> generateDescSubParser
-      [ ("add", "Add an new shelf", shelfAddOpts),
-        ("remove", "Remove a shelf", shelfRemoveOpts),
-        ("list", "List all shelves", pure ListShelves),
-        ("rename", "Rename a shelf", renameShelfOpts),
-        ("import", "Import a shelf from a file or stdin", ImportShelf <$> optionalFilePathArg),
-        ("export", "Export a shelf to a file or stdout", ExportShelf <$> optionalFilePathArg)
+      [ ("add", "Add an new shelf", Just shelfAddOpts),
+        ("remove", "Remove a shelf", Just shelfRemoveOpts),
+        ("list", "List all shelves", Just $ pure ListShelves),
+        ("rename", "Rename a shelf", Just renameShelfOpts),
+        ("import", "Import a shelf from a file or stdin", Just $ ImportShelf <$> optionalFilePathArg),
+        ("export", "Export a shelf to a file or stdout", Just exportOpts)
       ]
   where
-    filePathArg = strArgument (metavar "FILE")
-    optionalFilePathArg = optional filePathArg
-
     shelfAddOpts =
       AddShelf <$> strArgument (metavar "NAME")
     shelfRemoveOpts =
       RemoveShelf <$> strArgument (metavar "NAME") <*> noConfirmSwitch
     renameShelfOpts = fromToOpts RenameShelf
+    exportOpts = ExportShelf <$> strArgument (metavar "SHELF" <> help "Name of the shelf to be exported") <*> optionalFilePathArg
 
 mainCommands =
   generateDescSubParser
-    [ ("add", "Add an entry to the current shelf", add_opts),
-      ("list", "List entries on the current shelf", list_opts),
-      ("remove", "Remove an entry from the current shelf", remove_opts),
-      ("shelves", "Operate on shelves", shelfCommands),
-      ("move", "Move an entry to a different shelf", moveEntryOpts),
-      ("copy", "Copy an entry to a different shelf", copyEntryOpts),
-      ("rename", "Rename an entry", renameEntryOpts),
-      ("fp", "Print entry with path, shorthand for: list --path --name <TARGET>", pathPrintOpts),
-      ("version", "Print version information", pure VersionCmd),
-      ("license", "Print license information", pure ViewLicenseCmd)
+    [ ("add", "Add an entry to the current shelf", Just add_opts),
+      ("list", "List entries on the current shelf", Just list_opts),
+      ("remove", "Remove an entry from the current shelf", Just remove_opts),
+      ("move", "Move an entry to a different shelf", Just moveEntryOpts),
+      ("copy", "Copy an entry to a different shelf", Just copyEntryOpts),
+      ("rename", "Rename an entry", Just renameEntryOpts),
+      ("fp", "Print path for entry with exact NAME", Just pathPrintOpts)
     ]
+    <|> generateDescSubParser
+      [ ("Shelf commands", "", Nothing),
+        ("shelves", "Operate on shelves", Just shelfCommands)
+      ]
+    <|> generateDescSubParser
+      [ ("Misc commands", "", Nothing),
+        ("version", "Print version information", Just $ pure VersionCmd),
+        ("license", "Print license information", Just $ pure ViewLicenseCmd)
+      ]
   where
     makeDesc (name, desc, opts) = SubParserDesc name desc opts
     pathPrintOpts =
@@ -187,6 +193,10 @@ makeArgsInfo cmd = O.info (args <**> helper) (O.fullDesc <> fsmDesc)
                       <> help "Path to custom database (will be created if it does not exist)"
                   )
             )
+        <*> switch
+          ( long "dry-run"
+              <> help "Act as if doing things but don't actually write anything"
+          )
 
     internalShelfArg =
       StoredShelf
@@ -195,12 +205,6 @@ makeArgsInfo cmd = O.info (args <**> helper) (O.fullDesc <> fsmDesc)
               <> short 's'
               <> help "The shelf to use"
           )
-    hotLoadedShelfArg =
-      HotLoadedShelf
-        <$> strOption
-          ( long "shelf-from"
-              <> help "Load a shelf temporarily from exported JSON"
-          )
 
 noConfirmSwitch = switch (long "no-confirm" <> short 'y' <> help "Auto accept all confirmation dialogs")
 
@@ -208,3 +212,7 @@ fromToOpts target = target <$> fromArg <*> toArg
   where
     fromArg = strOption (long "from" <> short 'f' <> help "Source name" <> metavar "SOURCE")
     toArg = strOption (long "to" <> short 't' <> help "Target name" <> metavar "TARGET")
+
+filePathArg = strArgument (metavar "FILE")
+
+optionalFilePathArg = optional filePathArg
