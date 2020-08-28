@@ -31,6 +31,7 @@ data Error
   | DoesNotExist InfoType
   | NamingConflict InfoType
   | NotUnique Text
+  | TextError Text
 
 type Exception = ExceptT Error
 
@@ -39,6 +40,7 @@ printError (BadInput msg) = putStrLn $ unpack msg
 printError (DBError msg) = printf "Database error: %s\n" msg
 printError (DoesNotExist e) = printf "%s does not exist\n" $ infoTMsg e
 printError (NamingConflict e) = printf "%s already exists\n" $ infoTMsg e
+printError (TextError txt) = putStrLn $ unpack txt
 
 infoTMsg (Shelf name) = "Shelf '" `append` name `append` "'"
 infoTMsg (Entry name) = "Entry '" `append` name `append` "'"

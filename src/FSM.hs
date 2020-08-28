@@ -76,10 +76,27 @@ removeEntryByName entry db_ctx =
   checkEntryExists (T.Entry entry "" (DB.target_shelf db_ctx)) db_ctx
     >> (liftIO $ DB.removeFile entry db_ctx)
 
+removeItem :: (DB.DBObject a) => a -> DB.Context -> Exception IO ()
+removeItem item db_ctx = checkExists item db_ctx >> (liftIO $ DB.remove item db_ctx)
+
+removeShelfByName :: Text -> DB.Context -> Exception IO ()
+removeShelfByName name = removeItem (T.ShelfName name)
+
 renameEntryByName :: Text -> Text -> DB.Context -> Exception IO ()
 renameEntryByName from to db_ctx =
   checkEntryExistsByName from db_ctx >> liftIO (DB.getFiles from db_ctx)
     >>= \files -> liftIO $ DB.rename (files !! 0) to db_ctx
+
+checkExists :: (DB.DBObject a) => a -> DB.Context -> Exception IO ()
+checkExists item db_ctx = liftIO (DB.exists item db_ctx) >>= doCheck
+  where
+    doCheck :: Bool -> Exception IO ()
+    doCheck does_exist =
+      if does_exist
+        then return ()
+        else
+          liftIO (DB.getName item db_ctx)
+            >>= \name -> throwError $ EX.TextError $ name `append` " does not exist"
 
 checkEntryExistsByName :: Text -> DB.Context -> Exception IO ()
 checkEntryExistsByName entry_name ctx = checkEntryExists (T.Entry entry_name "" (DB.target_shelf ctx)) ctx

@@ -18,6 +18,7 @@
 
 module Frontend where
 
+import ArgsSetup
 import Control.Monad.Except (catchError, liftIO, runExceptT, throwError)
 import qualified DB
 import Data.Text (Text, append, pack, unpack)
@@ -42,157 +43,6 @@ handleErrors err = case err of
 handleErrorsT :: EX.Exception IO a -> IO ()
 handleErrorsT err = runExceptT err >>= handleErrors
 
-data ArgsResult
-  = ArgsResult Command (Maybe TargetShelfArg) (Maybe Text)
-
-data TargetShelfArg
-  = StoredShelf Text
-  | HotLoadedShelf FilePath
-
-data ShelfArgs
-  = AddShelf Text
-  | RemoveShelf Text Bool
-  | ListShelves
-  | RenameShelf Text Text
-  | ExportShelf (Maybe FilePath)
-  | ImportShelf (Maybe FilePath)
-  | ShelvesHelp Command
-
-data Command
-  = AddCmd FilePath (Maybe Text) Bool
-  | List Bool (Maybe Text)
-  | Remove Text Bool
-  | ShelfCmd ShelfArgs
-  | CopyCmd Text Text Text
-  | MoveCmd Text Text Text
-  | RenameCmd Text Text
-  | VersionCmd
-  | ConfigCmd
-  | HelpCmd
-  | ViewLicenseCmd
-
-generate_parse_info :: Parser Command
-generate_parse_info = parse_details --"Shelve your files to refer to them quickly later"
-  where
-    parse_details =
-      (subparser . foldMap cmd_info)
-        [ ("add", "Add an entry to the current shelf", add_opts),
-          ("list", "List entries on the current shelf", list_opts),
-          ("remove", "Remove an entry from the current shelf", remove_opts),
-          ("shelves", "Operate on shelves", generateShelfOptions),
-          ("move", "Move an entry to a different shelf", moveEntryOpts),
-          ("copy", "Copy an entry to a different shelf", copyEntryOpts),
-          ("rename", "Rename an entry", renameEntryOpts),
-          ("fp", "Print entry with path, shorthand for: list --path --name <TARGET>", pathPrintOpts),
-          ("version", "Print version information", pure VersionCmd),
-          ("license", "Print license information", pure ViewLicenseCmd)
-        ]
-
-    pathPrintOpts =
-      (\arg -> List False (Just arg)) <$> strArgument (metavar "TARGET")
-
-    renameEntryOpts = fromToOpts RenameCmd
-
-    fromToOpts target = target <$> fromArg <*> toArg
-      where
-        fromArg = strOption (long "from" <> short 'f' <> help "Source name" <> metavar "SOURCE")
-        toArg = strOption (long "to" <> short 't' <> help "Target name" <> metavar "TARGET")
-
-    list_opts =
-      List
-        <$> switch
-          ( long "full"
-              <> short 'f'
-              <> help "Show full information about each entry (name, path, etc)"
-          )
-        <*> ( optional $
-                strOption
-                  ( long "search"
-                      <> short 's'
-                      <> help "Filter results by a search term. Understands [%|*] as wildcard, i.e name* or name% will match anything starting with name, %name% or *name* will matching anything containing name"
-                  )
-            )
-    remove_opts =
-      Remove
-        <$> argument str (metavar "NAME") <*> noConfirmSwitch
-
-    add_opts =
-      AddCmd
-        <$> argument str (metavar "PATH")
-        <*> ( optional $
-                strOption
-                  ( long "name"
-                      <> short 'n'
-                      <> help "Set a name for the target (removes name confirmation dialog)"
-                  )
-            )
-        <*> noConfirmSwitch
-
-    targetArg = strArgument (metavar "ENTRY NAME")
-    moveEntryOpts = fromToOpts MoveCmd <*> targetArg
-    copyEntryOpts = fromToOpts CopyCmd <*> targetArg
-    generateShelfOptions :: Parser Command
-    generateShelfOptions =
-      ShelfCmd
-        <$> (subparser . foldMap cmd_info)
-          [ ("add", "Add an new shelf", shelf_add_opts),
-            ("remove", "Remove a shelf", shelf_remove_opts),
-            ("list", "List all shelves", pure ListShelves),
-            ("rename", "Rename a shelf", renameShelfOpts),
-            ("import", "Import a shelf from a file or stdin", ImportShelf <$> optionalFilePathArg),
-            ("export", "Export a shelf to a file or stdout", ExportShelf <$> optionalFilePathArg)
-          ]
-
-    filePathArg = strArgument (metavar "FILE")
-    optionalFilePathArg = optional filePathArg
-
-    noConfirmSwitch = switch (long "no-confirm" <> short 'y' <> help "Auto accept all confirmation dialogs")
-    shelf_add_opts =
-      AddShelf <$> strArgument (metavar "NAME")
-    shelf_remove_opts =
-      RemoveShelf <$> strArgument (metavar "NAME") <*> noConfirmSwitch
-    renameShelfOpts = fromToOpts RenameShelf
-
-    info' p desc = info (helper <*> p) (fullDesc <> progDesc desc)
-    cmd_info (cmd_name, desc, parser) = command cmd_name (info' parser desc)
-
-generateArgsInfo :: ParserInfo ArgsResult
-generateArgsInfo = makeArgsInfo generate_parse_info
-
-fsmDesc =
-  progDesc "A bookmarking system for your filesystem"
-    <> footer "'fsm <command> --help' can be used to view more specific help for each command"
-
-makeArgsInfo :: Parser Command -> ParserInfo ArgsResult
-makeArgsInfo cmd = info (args <**> helper) (fullDesc <> fsmDesc)
-  where
-    args = cmdArgs
-
-    cmdArgs =
-      ArgsResult
-        <$> cmd
-        <*> (optional $ internalShelfArg)
-        <*> ( optional $
-                strOption
-                  ( long "database"
-                      <> help "Path to custom database (will be created if it does not exist)"
-                  )
-            )
-
-    internalShelfArg =
-      StoredShelf
-        <$> strOption
-          ( long "shelf"
-              <> short 's'
-              <> help "The shelf to use"
-          )
-    hotLoadedShelfArg =
-      HotLoadedShelf
-        <$> strOption
-          ( long "shelf-from"
-              <> help "Load a shelf temporarily from exported JSON"
-          )
-
 parseOptions :: ArgsResult -> EX.Exception IO ()
 parseOptions (ArgsResult cmd tshelf db_path) = parseTargetShelf db_path tshelf >>= parseCommand cmd
 
@@ -209,7 +59,7 @@ parseCommand (AddCmd path chosen_name no_confirm) ctx =
     >>= \entry -> FSM.addEntry entry ctx
   where
     getName = case chosen_name of
-      Just n -> return n
+      Just n -> print n >> return n
       Nothing ->
         FSM.entryNameFromPathIfUnique path ctx
           >>= \name -> namePrompt name
