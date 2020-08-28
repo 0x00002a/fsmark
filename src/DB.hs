@@ -40,16 +40,18 @@ module DB
     defaultShelf,
     copyEntry,
     insertMany,
+    DBAction,
   )
 where
 
+import Control.Exception (throw)
 import Control.Monad (forM)
+import Control.Monad.Cont (ContT (..))
 import Control.Monad.Except (liftIO, throwError)
 import Data.Text (Text, append, pack, unpack)
 import qualified Data.Text as T
 import Database.SQLite.Simple
   ( Only (..),
-    query,
     query_,
   )
 import qualified Database.SQLite.Simple as SQL
@@ -62,21 +64,21 @@ import Types
 import qualified Types as T
 
 class DBObject a where
-  exists :: a -> Context -> IO Bool
-  insert :: a -> Context -> IO ()
-  dbId :: a -> Context -> IO Integer
-  remove :: a -> Context -> IO ()
-  retrieveAll :: Context -> IO [a]
-  rename :: a -> Text -> Context -> IO ()
-  getName :: a -> Context -> IO Text
-  retrieveAllLike :: Text -> Context -> IO [a]
-  insertMany :: [a] -> Context -> IO ()
-  insertMany entries ctx = SQL.withTransaction (conn ctx) doInsert
+  exists :: a -> Context -> DBAction Bool
+  insert :: a -> Context -> DBAction ()
+  dbId :: a -> Context -> DBAction Integer
+  remove :: a -> Context -> DBAction ()
+  retrieveAll :: Context -> DBAction [a]
+  rename :: a -> Text -> Context -> DBAction ()
+  getName :: a -> Context -> DBAction Text
+  retrieveAllLike :: Text -> Context -> DBAction [a]
+  insertMany :: [a] -> Context -> DBAction ()
+  insertMany entries ctx = beginTransaction ctx >>= \t -> doInsert >> endTransaction t
     where
       doInsert = mapM_ (\ent -> insert ent ctx) entries
 
 data Context = Context
-  { conn :: SQL.Connection,
+  { conn :: DBAction SQL.Connection,
     target_shelf :: Shelf,
     doing_dryrun :: Bool
   }
@@ -85,25 +87,34 @@ data ConnectionString = Path String | InMemory | DefaultDB
 
 data ConnectionType = Normal | DryRun
 
-execute :: (SQL.ToRow q) => Context -> SQL.Query -> q -> IO ()
+type DBAction a = ContT () IO a
+
+beginTransaction ctx = conn ctx >>= \c -> liftIO $ SQL.execute_ c "BEGIN TRANSACTION" >> return ctx
+
+endTransaction ctx = conn ctx >>= \c -> liftIO $ SQL.execute_ c "END TRANSACTION"
+
+execute :: (SQL.ToRow q) => Context -> SQL.Query -> q -> DBAction ()
 execute ctx query args
   | (doing_dryrun ctx) = return ()
-  | otherwise = SQL.execute (conn ctx) query args
+  | otherwise = (conn ctx) >>= \c -> liftIO $ SQL.execute c query args
+
+query :: (SQL.ToRow q, SQL.FromRow r) => Context -> SQL.Query -> q -> DBAction [r]
+query ctx query args = conn ctx >>= \c -> liftIO $ SQL.query c query args
 
 instance DBObject Shelf where
   insert (ShelfName name) ctx = execute ctx "INSERT INTO shelves (name) VALUES (?)" (Only name)
   dbId (ShelfID id) _ = return id
-  dbId (ShelfName name) ctx = getShelfId name (conn ctx)
+  dbId (ShelfName name) ctx = getShelfId name ctx
   remove (ShelfID id) ctx = getShelfName id ctx >>= \name -> removeShelf name ctx
   remove (ShelfName name) ctx = removeShelf name ctx
   retrieveAll ctx = (\names -> map (\name -> ShelfName name) names) <$> getAllShelfNames ctx
-  exists (ShelfName name) ctx = nestedNth 0 <$> query (conn ctx) "SELECT EXISTS (SELECT 1 FROM shelves WHERE name = ?)" (Only name)
-  exists (ShelfID id) ctx = nestedNth 0 <$> query (conn ctx) "SELECT EXISTS (SELECT 1 FROM shelves WHERE id = ?)" (Only id)
+  exists (ShelfName name) ctx = nestedNth 0 <$> query ctx "SELECT EXISTS (SELECT 1 FROM shelves WHERE name = ?)" (Only name)
+  exists (ShelfID id) ctx = nestedNth 0 <$> query ctx "SELECT EXISTS (SELECT 1 FROM shelves WHERE id = ?)" (Only id)
   rename (ShelfName name) to ctx = execute ctx "UPDATE shelves SET name = ? WHERE name = ?" (to, name)
   rename (ShelfID id) to ctx = execute ctx "UPDATE shelves SET name = ? WHERE id = ?" (to, id)
   getName (ShelfName name) _ = return name
   getName (ShelfID id) ctx = getShelfName id ctx
-  retrieveAllLike name ctx = (\names -> map (\name -> ShelfName name) (setSecondD names)) <$> query (conn ctx) "SELECT name FROM shelves WHERE name LIKE ?" (Only (formatLikeExpr name))
+  retrieveAllLike name ctx = (\names -> map (\name -> ShelfName name) (setSecondD names)) <$> query ctx "SELECT name FROM shelves WHERE name LIKE ?" (Only (formatLikeExpr name))
 
 instance DBObject Entry where
   insert file ctx = execQuery =<< targetShelfId ctx
@@ -113,15 +124,15 @@ instance DBObject Entry where
 
   dbId file ctx = nestedNth 0 <$> (execQuery =<< targetShelfId ctx)
     where
-      execQuery = \id -> query (conn ctx) "SELECT id FROM files WHERE name = ? AND shelf_id = ?" ((name file), id)
+      execQuery = \id -> query ctx "SELECT id FROM files WHERE name = ? AND shelf_id = ?" ((name file), id)
   remove file ctx = removeFile (name file) ctx
   retrieveAll ctx = getAllFiles ctx
-  exists file ctx = nestedNth 0 <$> ((\id -> query (conn ctx) "SELECT EXISTS (SELECT 1 FROM files WHERE name = ? AND shelf_id = ?)" ((name file), id)) =<< targetShelfId ctx)
+  exists file ctx = nestedNth 0 <$> ((\id -> query ctx "SELECT EXISTS (SELECT 1 FROM files WHERE name = ? AND shelf_id = ?)" ((name file), id)) =<< targetShelfId ctx)
   rename file to ctx = (\id -> execute ctx "UPDATE files SET name = ? WHERE name = ? AND shelf_id = ?" (to, (name file), id)) =<< dbId (shelf_id file) ctx
   getName file _ = return $ name file
   retrieveAllLike name ctx = (\res -> map rsToFile res) <$> execQuery
     where
-      execQuery = targetShelfId ctx >>= \id -> query (conn ctx) "SELECT name, path, shelf_id FROM files WHERE name LIKE ? AND shelf_id = ?" (formatLikeExpr name, id)
+      execQuery = targetShelfId ctx >>= \id -> query ctx "SELECT name, path, shelf_id FROM files WHERE name LIKE ? AND shelf_id = ?" (formatLikeExpr name, id)
 
 dbPath :: IO String
 dbPath = (\p -> p </> "data.db") <$> dir
@@ -138,8 +149,8 @@ dbTables =
 initDb :: SQL.Connection -> IO ()
 initDb conn = mapM_ (\sql -> SQL.execute_ conn $ SQL.Query sql) dbTables
 
-connect :: T.Shelf -> ConnectionString -> ConnectionType -> IO Context
-connect shelf conn_str conn_type = getPath >>= \p -> SQL.open p >>= \conn -> initAndGetShelfId conn >> createContext conn
+connect :: T.Shelf -> ConnectionString -> ConnectionType -> DBAction Context
+connect shelf conn_str conn_type = (liftIO getPath) >>= \p -> createContext $ ContT (SQL.withConnection p) >>= \conn -> liftIO $ (initAndGetShelfId conn) >> return conn
   where
     getPath = case conn_str of
       Path p -> checkAndEnsureExists p >> return p
@@ -153,43 +164,42 @@ connect shelf conn_str conn_type = getPath >>= \p -> SQL.open p >>= \conn -> ini
     isDryRun = case conn_type of
       DryRun -> True
       _ -> False
-
     ensureExists p exists =
       if exists
         then return ()
         else DIR.createDirectoryIfMissing True p
 
-getFiles :: Text -> Context -> IO [Entry]
+getFiles :: Text -> Context -> DBAction [Entry]
 getFiles name context = (\rs -> map handler rs) <$> (res =<< targetShelfId context)
   where
-    res = \id -> query (conn context) "SELECT name, path FROM files WHERE name = ? AND shelf_id = ?" (name, id)
+    res = \id -> query context "SELECT name, path FROM files WHERE name = ? AND shelf_id = ?" (name, id)
     handler = \(name, path) -> Entry name path (target_shelf context)
 
-getAllFiles :: Context -> IO [Entry]
+getAllFiles :: Context -> DBAction [Entry]
 getAllFiles context = (\res -> map handler res) <$> (stmt =<< targetShelfId context)
   where
-    stmt = \id -> query (conn context) "SELECT name, path, shelf_id FROM files WHERE shelf_id = ?" (Only id)
+    stmt = \id -> query context "SELECT name, path, shelf_id FROM files WHERE shelf_id = ?" (Only id)
     handler = \(n, p, sid) -> Entry {name = n, path = p, shelf_id = ShelfID sid}
 
 mapToShelves :: [Text] -> [Shelf]
 mapToShelves = map (\name -> ShelfName name)
 
-removeFile :: Text -> Context -> IO ()
+removeFile :: Text -> Context -> DBAction ()
 removeFile name context = stmt =<< targetShelfId context
   where
     stmt = \id -> execute context "DELETE FROM files WHERE name = ? AND shelf_id = ?" (name, id)
 
-getShelfName :: Integer -> Context -> IO Text
-getShelfName sid context = (\ns -> (\ns2 -> ns2 !! 0) ns !! 0) <$> query (conn context) "SELECT name FROM shelves WHERE id = ?" (Only sid)
+getShelfName :: Integer -> Context -> DBAction Text
+getShelfName sid context = (\ns -> (\ns2 -> ns2 !! 0) ns !! 0) <$> query context "SELECT name FROM shelves WHERE id = ?" (Only sid)
 
-getShelfId :: Text -> SQL.Connection -> IO Integer
+getShelfId :: Text -> Context -> DBAction Integer
 getShelfId shelf_name context = nestedNth 0 <$> query context "SELECT id FROM shelves WHERE name = ?" (Only shelf_name)
 
 nestedNth :: Int -> [[a]] -> a
 nestedNth n as = (\as2 -> as2 !! n) as !! n
 
-defaultShelfId :: Context -> IO Integer
-defaultShelfId context = nestedNth 0 <$> query_ (conn context) "SELECT id FROM shelves WHERE is_default = 1"
+defaultShelfId :: Context -> DBAction Integer
+defaultShelfId context = nestedNth 0 <$> (conn context >>= \c -> liftIO $ SQL.query_ c "SELECT id FROM shelves WHERE is_default = 1")
 
 makeEntry :: Text -> Prelude.FilePath -> Context -> IO Entry
 makeEntry name path context = ctor <$> getDir
@@ -200,42 +210,43 @@ makeEntry name path context = ctor <$> getDir
 defaultShelfName :: Text
 defaultShelfName = "default"
 
-getAllShelfNames :: Context -> IO [Text]
-getAllShelfNames ctx = (\rs -> map (\rs2 -> rs2 !! 0) rs) <$> query_ (conn ctx) "SELECT name FROM shelves"
+getAllShelfNames :: Context -> DBAction [Text]
+getAllShelfNames ctx = (\rs -> map (\rs2 -> rs2 !! 0) rs) <$> (conn ctx >>= \c -> liftIO $ SQL.query_ c "SELECT name FROM shelves")
 
-removeShelf :: Text -> Context -> IO ()
+removeShelf :: Text -> Context -> DBAction ()
 removeShelf name ctx = execute ctx "DELETE FROM shelves WHERE name = ? AND is_default = 0" (Only name)
 
 changeTargetShelf :: Shelf -> Context -> Context
 changeTargetShelf shelf ctx = ctx {target_shelf = shelf}
 
-copyEntryTo :: Shelf -> Text -> Context -> IO ()
+copyEntryTo :: Shelf -> Text -> Context -> DBAction ()
 copyEntryTo to_shelf name ctx = (\to_ctx -> getFiles name ctx >>= \files -> doInsert (files !! 0) to_ctx) $ changeTargetShelf to_shelf ctx
   where
     fixShelf = \f to_ctx -> f {shelf_id = target_shelf to_ctx}
     doInsert = \file to_ctx -> insert (fixShelf file to_ctx) to_ctx
 
-copyEntry :: Shelf -> Shelf -> Text -> Context -> EX.Exception IO ()
-copyEntry from to entry ctx = liftIO getEntries >>= \entries -> checkUnique entries to_ctx >> liftIO (insertMany entries to_ctx)
+copyEntry :: Shelf -> Shelf -> Text -> Context -> DBAction ()
+copyEntry from to entry ctx = getEntries >>= \entries -> checkUnique entries to_ctx >> insertMany entries to_ctx
   where
-    getEntries = retrieveAllLike entry from_ctx :: IO [T.Entry]
+    getEntries = retrieveAllLike entry from_ctx :: DBAction [T.Entry]
     from_ctx = changeTargetShelf from ctx
     to_ctx = changeTargetShelf to ctx
-    checkUnique :: [T.Entry] -> Context -> EX.Exception IO ()
+    checkUnique :: [T.Entry] -> Context -> DBAction ()
     checkUnique entries ctx =
-      (liftIO (checkAllUnique entries ctx))
+      (checkAllUnique entries ctx)
         >>= \all_unique ->
-          if all_unique
-            then return ()
-            else throwError $ EX.NamingConflict $ EX.Entry entry
+          liftIO $
+            if all_unique
+              then return ()
+              else throw $ EX.NamingConflict $ EX.Entry entry
 
-wipeDb :: Context -> IO ()
+wipeDb :: Context -> DBAction ()
 wipeDb ctx =
   if (doing_dryrun ctx)
     then return ()
-    else SQL.execute_ (conn ctx) "DROP TABLE shelves" >> SQL.execute_ (conn ctx) "DROP TABLE files" >> initDb (conn ctx)
+    else conn ctx >>= \c -> liftIO $ SQL.execute_ c "DROP TABLE shelves" >> SQL.execute_ c "DROP TABLE files" >> initDb c
 
-targetShelfId :: Context -> IO Integer
+targetShelfId :: Context -> DBAction Integer
 targetShelfId ctx = dbId (target_shelf ctx) ctx
 
 dummyShelf :: Shelf
@@ -258,8 +269,8 @@ formatLikeExpr = T.map repl
 
 checkUnique entry ctx = not <$> DB.exists entry ctx
 
-checkAllUnique :: (DBObject a) => [a] -> Context -> IO Bool
+checkAllUnique :: (DBObject a) => [a] -> Context -> DBAction Bool
 checkAllUnique entries ctx = mapM (\ent -> checkUnique ent ctx) entries >>= \all_unique -> return $ all (\b -> b) all_unique
 
-optimiseContext :: Context -> IO Context
+optimiseContext :: Context -> DBAction Context
 optimiseContext ctx = targetShelfId ctx >>= \id -> return ctx {target_shelf = ShelfID id}

@@ -23,8 +23,8 @@ module Json
   )
 where
 
-import Control.Monad.Except (throwError)
-import qualified DB (Context, getName, retrieveAll)
+import Control.Exception (throw)
+import qualified DB (Context, DBAction, getName, retrieveAll)
 import Data.Aeson
 import Data.ByteString.Lazy (ByteString)
 import Data.Text (Text)
@@ -72,15 +72,15 @@ toInternalShelf (Shelf name entries) = (T.ShelfName name, makeEntries)
 entryToJson :: T.Entry -> ByteString
 entryToJson entry = encode $ makeJEntry entry
 
-shelfToJson :: T.Shelf -> DB.Context -> IO ByteString
+shelfToJson :: T.Shelf -> DB.Context -> DB.DBAction ByteString
 shelfToJson shelf ctx = encode <$> makeJShelf shelf ctx
 
-shelfFromJson :: ByteString -> EX.Exception IO (T.Shelf, [T.Entry])
+shelfFromJson :: ByteString -> IO (T.Shelf, [T.Entry])
 shelfFromJson j_str = doDecode $ decode j_str
   where
-    doDecode :: Maybe Shelf -> EX.Exception IO JShelf
+    doDecode :: Maybe Shelf -> IO JShelf
     doDecode mshelf = handleErr mshelf >>= \shelf -> return $ toInternalShelf shelf
 
-    handleErr :: Maybe a -> EX.Exception IO a
-    handleErr Nothing = throwError $ EX.BadInput ""
+    handleErr :: Maybe a -> IO a
+    handleErr Nothing = throw $ EX.BadInput ""
     handleErr (Just f) = return f

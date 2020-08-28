@@ -19,20 +19,24 @@
 module Frontend where
 
 import ArgsSetup
-import Control.Monad.Except (catchError, liftIO, runExceptT, throwError)
+import Control.Exception (try)
+import Control.Monad.IO.Class (MonadIO (liftIO))
 import qualified DB
 import Data.Text (Text, append, pack, unpack)
 import qualified Exceptions as EX
 import qualified FSM
 import Options.Applicative
 import qualified Pretty
-import System.IO (hFlush, stdout)
+import System.IO (IOMode (..), hFlush, hPutStr, stdout)
 import Text.Printf (printf)
 import qualified Types as T
 
 runFSM :: IO ()
-runFSM = customExecParser p generateArgsInfo >>= \options -> (runExceptT $ parseOptions options) >>= handleErrors
+runFSM = customExecParser p generateArgsInfo >>= \options -> (try $ FSM.cleanup $ parseOptions options) >>= handleExceptions
   where
+    handleExceptions :: Either EX.Error () -> IO ()
+    handleExceptions (Left exception) = putStrLn $ show exception
+    handleExceptions (Right _) = return ()
     p = prefs (showHelpOnEmpty <> disambiguate)
 
 handleErrors :: Either EX.Error a -> IO ()
@@ -40,19 +44,16 @@ handleErrors err = case err of
   Left err -> EX.printError err
   Right _ -> return ()
 
-handleErrorsT :: EX.Exception IO a -> IO ()
-handleErrorsT err = runExceptT err >>= handleErrors
-
-parseOptions :: ArgsResult -> EX.Exception IO ()
+parseOptions :: ArgsResult -> DB.DBAction ()
 parseOptions (ArgsResult cmd tshelf db_path dry_run) = parseTargetShelf db_path tshelf dry_run >>= parseCommand cmd
   where
     parseTargetShelf db_path (Just (StoredShelf name)) = FSM.connectToDb (Just (T.ShelfName name)) db_path
     parseTargetShelf db_path Nothing = FSM.connectToDb Nothing db_path
 
-parseCommand :: Command -> DB.Context -> EX.Exception IO ()
-parseCommand (List path_only match) ctx = liftIO $ FSM.getAll ctx match >>= pathsPrinter path_only
+parseCommand :: Command -> DB.Context -> DB.DBAction ()
+parseCommand (List path_only match) ctx = FSM.getAll ctx match >>= \items -> (liftIO $ pathsPrinter path_only items)
 parseCommand (AddCmd path chosen_name no_confirm) ctx = createEntryFromInput chosen_name path ctx no_confirm >>= \entry -> FSM.addEntry entry ctx
-parseCommand (Remove name no_confirm) ctx = liftIO $ getConfirm >>= removeDecider
+parseCommand (Remove name no_confirm) ctx = liftIO getConfirm >>= removeDecider
   where
     getConfirm =
       if no_confirm
@@ -69,9 +70,9 @@ parseCommand (RenameCmd from to) ctx = FSM.renameEntryByName from to ctx
 parseCommand (VersionCmd) _ = liftIO Pretty.printVersionInfo
 parseCommand (ViewLicenseCmd) _ = liftIO Pretty.printLicense
 
-parseShelvesCmd :: ShelfArgs -> DB.Context -> EX.Exception IO ()
+parseShelvesCmd :: ShelfArgs -> DB.Context -> DB.DBAction ()
 parseShelvesCmd (AddShelf name) ctx = FSM.addShelf (T.ShelfName name) ctx
-parseShelvesCmd (RemoveShelf name no_confirm) ctx = liftIO $ getConfirm >>= removeDecider
+parseShelvesCmd (RemoveShelf name no_confirm) ctx = liftIO getConfirm >>= removeDecider
   where
     getConfirm =
       if no_confirm
@@ -81,7 +82,7 @@ parseShelvesCmd (RemoveShelf name no_confirm) ctx = liftIO $ getConfirm >>= remo
       if remove
         then DB.removeShelf name ctx
         else return ()
-parseShelvesCmd (ListShelves) ctx = liftIO $ (FSM.getAll ctx Nothing :: IO [T.Shelf]) >>= Pretty.printList
+parseShelvesCmd (ListShelves) ctx = (FSM.getAll ctx Nothing :: DB.DBAction [T.Shelf]) >>= \list -> liftIO $ Pretty.printList list
 parseShelvesCmd (RenameShelf from to) ctx = FSM.renameShelfByName from to ctx
 parseShelvesCmd (ImportShelf path) ctx = FSM.importShelf path ctx
 parseShelvesCmd (ExportShelf name path) ctx = FSM.exportShelf (T.ShelfName name) ctx path
@@ -106,7 +107,7 @@ promptInput :: Text -> IO Text
 promptInput prompt = putStr (unpack prompt) >> hFlush stdout >> getLine >>= \line -> return $ pack line
 
 createEntryFromInput name path db_ctx confirm =
-  liftIO getName
+  getName
     >>= (\name -> liftIO $ DB.makeEntry name path db_ctx)
   where
     getName = case name of
@@ -115,10 +116,10 @@ createEntryFromInput name path db_ctx confirm =
         FSM.entryNameFromPathIfUnique path db_ctx
           >>= \name ->
             if confirm
-              then namePrompt name
+              then liftIO $ namePrompt name
               else case name of
                 Just nm -> return nm
-                Nothing -> namePrompt name
+                Nothing -> liftIO $ namePrompt name
 
     namePrompt name =
       (promptInput $ "Enter a name for the new entry" `append` (nameAutoComplete name))
