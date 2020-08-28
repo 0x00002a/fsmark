@@ -1,5 +1,5 @@
 module Types
-  ( Entry (Entry, name, path, shelf_id),
+  ( Entry (Entry, name, path),
     Shelf (ShelfID, ShelfName),
     Types.FilePath (..),
   )
@@ -11,8 +11,7 @@ newtype FilePath = FP Text
 
 data Entry = Entry
   { name :: Text,
-    path :: Text,
-    shelf_id :: Shelf
+    path :: Text
   }
 
 data Shelf

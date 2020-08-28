@@ -73,7 +73,7 @@ class DBObject a where
   getName :: a -> Context -> DBAction Text
   retrieveAllLike :: Text -> Context -> DBAction [a]
   insertMany :: [a] -> Context -> DBAction ()
-  insertMany entries ctx = beginTransaction ctx >>= \t -> doInsert >> endTransaction t
+  insertMany entries ctx = doInsert
     where
       doInsert = mapM_ (\ent -> insert ent ctx) entries
 
@@ -89,9 +89,7 @@ data ConnectionType = Normal | DryRun
 
 type DBAction a = ContT () IO a
 
-beginTransaction ctx = conn ctx >>= \c -> liftIO $ SQL.execute_ c "BEGIN TRANSACTION" >> return ctx
-
-endTransaction ctx = conn ctx >>= \c -> liftIO $ SQL.execute_ c "END TRANSACTION"
+type InternalShelfID = Integer
 
 execute :: (SQL.ToRow q) => Context -> SQL.Query -> q -> DBAction ()
 execute ctx query args
@@ -100,6 +98,9 @@ execute ctx query args
 
 query :: (SQL.ToRow q, SQL.FromRow r) => Context -> SQL.Query -> q -> DBAction [r]
 query ctx query args = conn ctx >>= \c -> liftIO $ SQL.query c query args
+
+instance SQL.FromRow T.Entry where
+  fromRow = T.Entry <$> SQL.field <*> SQL.field
 
 instance DBObject Shelf where
   insert (ShelfName name) ctx = execute ctx "INSERT INTO shelves (name) VALUES (?)" (Only name)
@@ -128,7 +129,7 @@ instance DBObject Entry where
   remove file ctx = removeFile (name file) ctx
   retrieveAll ctx = getAllFiles ctx
   exists file ctx = nestedNth 0 <$> ((\id -> query ctx "SELECT EXISTS (SELECT 1 FROM files WHERE name = ? AND shelf_id = ?)" ((name file), id)) =<< targetShelfId ctx)
-  rename file to ctx = (\id -> execute ctx "UPDATE files SET name = ? WHERE name = ? AND shelf_id = ?" (to, (name file), id)) =<< dbId (shelf_id file) ctx
+  rename file to ctx = (\id -> execute ctx "UPDATE files SET name = ? WHERE name = ? AND shelf_id = ?" (to, (name file), id)) =<< targetShelfId ctx
   getName file _ = return $ name file
   retrieveAllLike name ctx = (\res -> map rsToFile res) <$> execQuery
     where
@@ -173,13 +174,12 @@ getFiles :: Text -> Context -> DBAction [Entry]
 getFiles name context = (\rs -> map handler rs) <$> (res =<< targetShelfId context)
   where
     res = \id -> query context "SELECT name, path FROM files WHERE name = ? AND shelf_id = ?" (name, id)
-    handler = \(name, path) -> Entry name path (target_shelf context)
+    handler = \(name, path) -> Entry name path
 
 getAllFiles :: Context -> DBAction [Entry]
-getAllFiles context = (\res -> map handler res) <$> (stmt =<< targetShelfId context)
+getAllFiles context = stmt =<< targetShelfId context
   where
-    stmt = \id -> query context "SELECT name, path, shelf_id FROM files WHERE shelf_id = ?" (Only id)
-    handler = \(n, p, sid) -> Entry {name = n, path = p, shelf_id = ShelfID sid}
+    stmt = \id -> query context "SELECT name, path FROM files WHERE shelf_id = ?" (Only id)
 
 mapToShelves :: [Text] -> [Shelf]
 mapToShelves = map (\name -> ShelfName name)
@@ -205,7 +205,7 @@ makeEntry :: Text -> Prelude.FilePath -> Context -> IO Entry
 makeEntry name path context = ctor <$> getDir
   where
     getDir = (\p -> pack p) <$> (DIR.makeAbsolute path)
-    ctor = \dir -> Entry name dir (target_shelf context)
+    ctor = \dir -> Entry name dir
 
 defaultShelfName :: Text
 defaultShelfName = "default"
@@ -222,8 +222,7 @@ changeTargetShelf shelf ctx = ctx {target_shelf = shelf}
 copyEntryTo :: Shelf -> Text -> Context -> DBAction ()
 copyEntryTo to_shelf name ctx = (\to_ctx -> getFiles name ctx >>= \files -> doInsert (files !! 0) to_ctx) $ changeTargetShelf to_shelf ctx
   where
-    fixShelf = \f to_ctx -> f {shelf_id = target_shelf to_ctx}
-    doInsert = \file to_ctx -> insert (fixShelf file to_ctx) to_ctx
+    doInsert = \file to_ctx -> insert file to_ctx
 
 copyEntry :: Shelf -> Shelf -> Text -> Context -> DBAction ()
 copyEntry from to entry ctx = getEntries >>= \entries -> checkUnique entries to_ctx >> insertMany entries to_ctx
@@ -259,7 +258,7 @@ setSecondD :: [[a]] -> [a]
 setSecondD = map (\list -> list !! 0)
 
 rsToFile :: (Text, Text, Integer) -> Entry
-rsToFile (name, path, shelf) = Entry name path (ShelfID shelf)
+rsToFile (name, path, shelf) = Entry name path
 
 formatLikeExpr :: Text -> Text
 formatLikeExpr = T.map repl

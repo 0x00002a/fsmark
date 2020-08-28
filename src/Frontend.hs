@@ -19,9 +19,10 @@
 module Frontend where
 
 import ArgsSetup
-import Control.Exception (try)
+import Control.Exception (throw, try)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import qualified DB
+import Data.Maybe (catMaybes, mapMaybe)
 import Data.Text (Text, append, pack, unpack)
 import qualified Exceptions as EX
 import qualified FSM
@@ -47,12 +48,46 @@ handleErrors err = case err of
 parseOptions :: ArgsResult -> DB.DBAction ()
 parseOptions (ArgsResult cmd tshelf db_path dry_run) = parseTargetShelf db_path tshelf dry_run >>= parseCommand cmd
   where
-    parseTargetShelf db_path (Just (StoredShelf name)) = FSM.connectToDb (Just (T.ShelfName name)) db_path
+    parseTargetShelf db_path (Just name) = FSM.connectToDb (Just (T.ShelfName name)) db_path
     parseTargetShelf db_path Nothing = FSM.connectToDb Nothing db_path
 
 parseCommand :: Command -> DB.Context -> DB.DBAction ()
-parseCommand (List path_only match) ctx = FSM.getAll ctx match >>= \items -> (liftIO $ pathsPrinter path_only items)
-parseCommand (AddCmd path chosen_name no_confirm) ctx = createEntryFromInput chosen_name path ctx no_confirm >>= \entry -> FSM.addEntry entry ctx
+parseCommand (List path_only match) ctx = FSM.getAll ctx match >>= printItems
+  where
+    printItems [] = case match of
+      Just m -> liftIO $ throw $ EX.TextError $ "No items matching '" `append` m `append` "'"
+      Nothing -> return ()
+    printItems items = liftIO $ pathsPrinter path_only items
+parseCommand (AddCmd [path] chosen_name no_confirm False _) ctx = getEntry >>= \entry -> liftIO (entry) >>= \ent -> FSM.addEntry ent ctx
+  where
+    getEntry = case chosen_name of
+      Just name -> return $ FSM.makeEntry name path
+      Nothing -> createEntryFromInput path ctx no_confirm
+parseCommand (AddCmd paths _ no_confirm False _) ctx = createEntries >>= \ents -> liftIO (sequence (ents)) >>= \entries -> FSM.addMany entries ctx
+  where
+    createEntries = mapM (\path -> createEntryFromInput path ctx no_confirm) paths
+parseCommand (AddCmd paths chosen_name no_confirm True depth) ctx =
+  createEntries
+    >>= \entries -> FSM.addMany entries ctx
+  where
+    findEntries :: DB.DBAction [T.Entry]
+    findEntries = concat <$> (liftIO $ mapM (\path -> FSM.createEntriesRecursive path depth) paths)
+    createEntries :: DB.DBAction [T.Entry]
+    createEntries =
+      findEntries
+        >>= \entries ->
+          (\names -> setNames entries names) <$> (filterEntries entries)
+    filterEntries :: [T.Entry] -> DB.DBAction [Text]
+    filterEntries entries =
+      FSM.getUniqueOutOf entries ctx >>= getEntryNames
+    getEntryNames entries =
+      if no_confirm
+        then return $ map T.name $ catMaybes entries
+        else liftIO $ mapM promptEntry entries
+    promptEntry :: Maybe T.Entry -> IO Text
+    promptEntry Nothing = namePrompt Nothing
+    promptEntry (Just ent) = namePrompt (Just $ T.name ent)
+    setNames entries names = map (\(name, entry) -> entry {T.name = name}) $ zip names entries
 parseCommand (Remove name no_confirm) ctx = liftIO getConfirm >>= removeDecider
   where
     getConfirm =
@@ -106,26 +141,21 @@ getConfirmationYesNo prompt = promptInput (prompt `append` "[y/n]: ") >>= checkL
 promptInput :: Text -> IO Text
 promptInput prompt = putStr (unpack prompt) >> hFlush stdout >> getLine >>= \line -> return $ pack line
 
-createEntryFromInput name path db_ctx confirm =
-  getName
-    >>= (\name -> liftIO $ DB.makeEntry name path db_ctx)
+namePrompt name =
+  (promptInput $ "Enter a name for the new entry" `append` (nameAutoComplete name))
+    >>= \input_name -> decodeName input_name name
   where
-    getName = case name of
-      Just n -> return n
-      Nothing ->
-        FSM.entryNameFromPathIfUnique path db_ctx
-          >>= \name ->
-            if confirm
-              then liftIO $ namePrompt name
-              else case name of
-                Just nm -> return nm
-                Nothing -> liftIO $ namePrompt name
-
-    namePrompt name =
-      (promptInput $ "Enter a name for the new entry" `append` (nameAutoComplete name))
-        >>= \input_name -> decodeName input_name name
     nameAutoComplete (Just name) = " [" `append` name `append` "]: "
     nameAutoComplete Nothing = ": "
     decodeName ("") (Just name) = return name
     decodeName ("") Nothing = putStrLn "Please enter a valid name" >> namePrompt Nothing
     decodeName name _ = return name
+
+createEntryFromInput path db_ctx no_confirm = (\name -> FSM.makeEntry name path) <$> getName
+  where
+    getName =
+      if no_confirm
+        then liftIO $ FSM.nameForPath path
+        else doPrompt >>= \name -> liftIO $ namePrompt name
+
+    doPrompt = FSM.entryNameFromPathIfUnique path db_ctx

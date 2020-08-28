@@ -22,6 +22,7 @@ import Control.Exception (throw)
 import Control.Monad.Cont
 import Control.Monad.Cont (ContT (..))
 import qualified DB
+import Data.Maybe (catMaybes)
 import Data.Text (Text, append, pack, unpack)
 import Exceptions (Error (BadInput, DoesNotExist), Exception)
 import qualified Exceptions as EX
@@ -140,9 +141,7 @@ addShelf :: T.Shelf -> DB.Context -> DB.DBAction ()
 addShelf shelf db_ctx = checkShelfNotExists shelf db_ctx >> DB.insert shelf db_ctx
 
 connectToDb :: Maybe T.Shelf -> Maybe Text -> Bool -> DB.DBAction DB.Context
-connectToDb shelf_name db_path is_dryrun =
-  DB.connect shelf connString connType
-    >>= \db -> checkShelfExists shelf db >> return db
+connectToDb shelf_name db_path is_dryrun = DB.connect shelf connString connType
   where
     shelf = case shelf_name of
       Just sh -> sh
@@ -225,3 +224,57 @@ insertEntries (shelf, entries) db_ctx = maybeInsertShelf >> DB.insertMany entrie
         if (not exists)
           then DB.insert shelf db_ctx
           else return ()
+
+entryFromPath :: FilePath -> IO T.Entry
+entryFromPath path = T.Entry <$> nameForPath path <*> (pack <$> DIR.makeAbsolute path)
+
+createEntriesRecursive :: FilePath -> Integer -> IO [T.Entry]
+createEntriesRecursive fp depth = listDirRecursive fp depth >>= \paths -> mapM entryFromPath paths
+
+addEntriesRecursive :: FilePath -> Integer -> DB.Context -> DB.DBAction ()
+addEntriesRecursive fp depth db_ctx =
+  liftIO (createEntriesRecursive fp depth)
+    >>= \entries -> DB.insertMany entries db_ctx
+
+dirExistsOrError :: FilePath -> IO ()
+dirExistsOrError dir =
+  DIR.doesDirectoryExist dir >>= \exists ->
+    if exists
+      then return ()
+      else throw $ EX.TextError $ (pack dir) `append` " does not exist"
+
+listDir :: FilePath -> IO [FilePath]
+listDir dir = DIR.listDirectory dir
+
+listDirRecursive :: FilePath -> Integer -> IO [FilePath]
+listDirRecursive _ 0 = return []
+listDirRecursive fp depth =
+  ( DIR.makeAbsolute fp
+      >>= (\path -> listDir path)
+      >>= \paths ->
+        filterDirs paths
+          >>= exploreNextLevel
+          >>= \next_paths -> return $ next_paths ++ paths
+  )
+  where
+    filterDirs paths = filterM DIR.doesDirectoryExist paths
+    exploreNextLevel paths = concat <$> mapM (\p -> listDirRecursive p (depth - 1)) paths
+
+addMany :: (DB.DBObject a) => [a] -> DB.Context -> DB.DBAction ()
+addMany = DB.insertMany
+
+getUniqueOutOf :: (DB.DBObject a) => [a] -> DB.Context -> DB.DBAction [Maybe a]
+getUniqueOutOf items db_ctx = existenceList
+  where
+    existenceList =
+      mapM
+        ( \item ->
+            DB.exists item db_ctx >>= \exists ->
+              if exists
+                then return Nothing
+                else return (Just item)
+        )
+        items
+
+makeEntry :: Text -> FilePath -> IO T.Entry
+makeEntry name fp = T.Entry name <$> pack <$> DIR.makeAbsolute fp

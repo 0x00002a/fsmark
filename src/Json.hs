@@ -61,13 +61,13 @@ makeJShelf shelf ctx =
       DB.retrieveAll ctx
         >>= \entries -> return $ Shelf name (map makeJEntry entries)
 
-toInternalEntry :: T.Shelf -> Entry -> T.Entry
-toInternalEntry shelf (Entry name path) = T.Entry name path shelf
+toInternalEntry :: Entry -> T.Entry
+toInternalEntry (Entry name path) = T.Entry name path
 
 toInternalShelf :: Shelf -> (T.Shelf, [T.Entry])
 toInternalShelf (Shelf name entries) = (T.ShelfName name, makeEntries)
   where
-    makeEntries = map (toInternalEntry (T.ShelfName name)) entries
+    makeEntries = map toInternalEntry entries
 
 entryToJson :: T.Entry -> ByteString
 entryToJson entry = encode $ makeJEntry entry

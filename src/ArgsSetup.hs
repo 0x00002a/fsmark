@@ -20,7 +20,6 @@ module ArgsSetup
   ( generateArgsInfo,
     ArgsResult (ArgsResult),
     ShelfArgs (..),
-    TargetShelfArg (..),
     Command (..),
   )
 where
@@ -46,10 +45,7 @@ import Options.Applicative
 import qualified Options.Applicative as O
 
 data ArgsResult
-  = ArgsResult Command (Maybe TargetShelfArg) (Maybe Text) Bool
-
-data TargetShelfArg
-  = StoredShelf Text
+  = ArgsResult Command (Maybe Text) (Maybe Text) Bool
 
 data ShelfArgs
   = AddShelf Text
@@ -61,7 +57,7 @@ data ShelfArgs
   | ImportShelf (Maybe FilePath)
 
 data Command
-  = AddCmd FilePath (Maybe Text) Bool
+  = AddCmd [FilePath] (Maybe Text) Bool Bool Integer
   | List Bool (Maybe Text)
   | Remove Text Bool
   | ShelfCmd ShelfArgs
@@ -157,15 +153,27 @@ mainCommands =
 
     add_opts =
       AddCmd
-        <$> argument str (metavar "PATH")
+        <$> O.many (argument str (metavar "PATH"))
         <*> ( optional $
                 strOption
                   ( long "name"
                       <> short 'n'
-                      <> help "Set a name for the target (removes name confirmation dialog)"
+                      <> help "Set a name for the target (removes name confirmation dialog). Does nothing if multiple paths are specified"
                   )
             )
         <*> noConfirmSwitch
+        <*> switch
+          ( long "recursive"
+              <> short 'r'
+              <> help "Add recursively"
+          )
+        <*> O.option
+          O.auto
+          ( long "depth"
+              <> short 'd'
+              <> help "Recursion depth, no effect without -r|--recursive. Set to -1 for maximum possible"
+              <> O.value 1
+          )
 
     targetArg = strArgument (metavar "ENTRY NAME")
     moveEntryOpts = fromToOpts MoveCmd <*> targetArg
@@ -199,12 +207,11 @@ makeArgsInfo cmd = O.info (args <**> helper) (O.fullDesc <> fsmDesc)
           )
 
     internalShelfArg =
-      StoredShelf
-        <$> strOption
-          ( long "shelf"
-              <> short 's'
-              <> help "The shelf to use"
-          )
+      strOption
+        ( long "shelf"
+            <> short 's'
+            <> help "The shelf to use"
+        )
 
 noConfirmSwitch = switch (long "no-confirm" <> short 'y' <> help "Auto accept all confirmation dialogs")
 
