@@ -51,9 +51,9 @@ copyEntry from to entry db_ctx =
     doCopy = \to src_ctx -> DB.copyEntry from to entry db_ctx
     existsCheck = checkShelfExists from db_ctx >> checkShelfExists to db_ctx
 
-getAllEntries :: DB.Context -> Maybe Text -> IO [T.Entry]
-getAllEntries db_ctx (Just name_filter) = DB.retrieveAllLike name_filter db_ctx
-getAllEntries db_ctx Nothing = DB.retrieveAll db_ctx
+getAll :: (DB.DBObject a) => DB.Context -> Maybe Text -> IO [a]
+getAll db_ctx (Just name_filter) = DB.retrieveAllLike name_filter db_ctx
+getAll db_ctx Nothing = DB.retrieveAll db_ctx
 
 checkShelfExists :: T.Shelf -> DB.Context -> Exception IO ()
 checkShelfExists shelf db_ctx =

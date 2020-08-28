@@ -18,7 +18,7 @@
 
 module Pretty where
 
-import Data.Text (Text, unpack)
+import Data.Text (Text, append, pack, unpack)
 import Text.Printf (printf)
 import qualified Types as T
 
@@ -30,6 +30,10 @@ instance PrettyPrintable Text where
 
 instance Pretty.PrettyPrintable T.Entry where
   display f = printf "Name: %s\nPath: %s\n\n" (T.name f) (T.path f)
+
+instance Pretty.PrettyPrintable T.Shelf where
+  display (T.ShelfName name) = display $ "Name: " `append` name
+  display (T.ShelfID id) = display $ "ID: " `append` (pack $ show id)
 
 printList :: (PrettyPrintable a) => [a] -> IO ()
 printList = mapM_ display

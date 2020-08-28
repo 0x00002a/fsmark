@@ -40,5 +40,12 @@ printError (DBError msg) = printf "Database error: %s\n" msg
 printError (DoesNotExist e) = printf "%s does not exist\n" $ infoTMsg e
 printError (NamingConflict e) = printf "%s already exists\n" $ infoTMsg e
 
-infoTMsg (Shelf name) = "Shelf '" `append` name `append` "'"
-infoTMsg (Entry name) = "Entry '" `append` name `append` "'"
+surroundWith :: Text -> Text -> Text
+surroundWith ch txt = ch `append` txt `append` ch
+
+quote :: Text -> Text
+quote = surroundWith "'"
+
+infoTMsg :: InfoType -> Text
+infoTMsg (Shelf name) = "Shelf " `append` quote name
+infoTMsg (Entry name) = "Entry " `append` quote name

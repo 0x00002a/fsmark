@@ -202,25 +202,8 @@ parseTargetShelf _ (Just (HotLoadedShelf path)) = FSM.connectToDbWithTmpShelf (J
 parseTargetShelf db_path Nothing = FSM.connectToDb Nothing db_path
 
 parseCommand :: Command -> DB.Context -> EX.Exception IO ()
-parseCommand (List path_only match) ctx = liftIO $ FSM.getAllEntries ctx match >>= pathsPrinter path_only
-parseCommand (AddCmd path chosen_name no_confirm) ctx =
-  liftIO getName
-    >>= (\name -> liftIO $ DB.makeEntry name (pack path) ctx)
-    >>= \entry -> FSM.addEntry entry ctx
-  where
-    getName = case chosen_name of
-      Just n -> return n
-      Nothing ->
-        FSM.entryNameFromPathIfUnique path ctx
-          >>= \name -> namePrompt name
-    namePrompt name =
-      (promptInput $ "Enter a name for the new entry" `append` (nameAutoComplete name))
-        >>= \input_name -> decodeName input_name name
-    nameAutoComplete (Just name) = " [" `append` name `append` "]: "
-    nameAutoComplete Nothing = ": "
-    decodeName ("") (Just name) = return name
-    decodeName ("") Nothing = putStrLn "Please enter a valid name" >> namePrompt Nothing
-    decodeName name _ = return name
+parseCommand (List path_only match) ctx = liftIO $ FSM.getAll ctx match >>= pathsPrinter path_only
+parseCommand (AddCmd path chosen_name no_confirm) ctx = createEntryFromInput chosen_name path ctx no_confirm >>= \entry -> FSM.addEntry entry ctx
 parseCommand (Remove name no_confirm) ctx = liftIO $ getConfirm >>= removeDecider
   where
     getConfirm =
@@ -250,7 +233,7 @@ parseShelvesCmd (RemoveShelf name no_confirm) ctx = liftIO $ getConfirm >>= remo
       if remove
         then DB.removeShelf name ctx
         else return ()
-parseShelvesCmd (ListShelves) ctx = liftIO $ DB.getAllShelfNames ctx >>= Pretty.printList
+parseShelvesCmd (ListShelves) ctx = liftIO $ (FSM.getAll ctx Nothing :: IO [T.Shelf]) >>= Pretty.printList
 parseShelvesCmd (RenameShelf from to) ctx = FSM.renameShelfByName from to ctx
 parseShelvesCmd (ImportShelf path) ctx = FSM.importShelf path ctx
 parseShelvesCmd (ExportShelf path) ctx = FSM.exportShelf (DB.target_shelf ctx) ctx path
@@ -263,7 +246,7 @@ pathsPrinter False files = Pretty.printList $ extractPaths files
 pathsPrinter True files = Pretty.printList files
 
 getConfirmationYesNo :: Text -> IO Bool
-getConfirmationYesNo prompt = printf "%s [y/n]: " prompt >> hFlush stdout >> getLine >>= checkLine
+getConfirmationYesNo prompt = promptInput (prompt `append` "[y/n]: ") >>= checkLine
   where
     checkLine "yes" = return True
     checkLine "y" = return True
@@ -276,3 +259,27 @@ setupFile name ctx = T.Entry name "" (DB.target_shelf ctx)
 
 promptInput :: Text -> IO Text
 promptInput prompt = putStr (unpack prompt) >> hFlush stdout >> getLine >>= \line -> return $ pack line
+
+createEntryFromInput name path db_ctx confirm =
+  liftIO getName
+    >>= (\name -> liftIO $ DB.makeEntry name (pack path) db_ctx)
+  where
+    getName = case name of
+      Just n -> return n
+      Nothing ->
+        FSM.entryNameFromPathIfUnique path db_ctx
+          >>= \name ->
+            if confirm
+              then namePrompt name
+              else case name of
+                Just nm -> return nm
+                Nothing -> namePrompt name
+
+    namePrompt name =
+      (promptInput $ "Enter a name for the new entry" `append` (nameAutoComplete name))
+        >>= \input_name -> decodeName input_name name
+    nameAutoComplete (Just name) = " [" `append` name `append` "]: "
+    nameAutoComplete Nothing = ": "
+    decodeName ("") (Just name) = return name
+    decodeName ("") Nothing = putStrLn "Please enter a valid name" >> namePrompt Nothing
+    decodeName name _ = return name
