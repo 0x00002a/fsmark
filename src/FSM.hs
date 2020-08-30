@@ -22,6 +22,8 @@ import Control.Exception (throw)
 import Control.Monad.Cont
 import Control.Monad.Cont (ContT (..))
 import qualified DB
+import Data.Map (Map (..))
+import qualified Data.Map as M
 import Data.Maybe (catMaybes)
 import Data.Text (Text, append, pack, unpack)
 import Exceptions (Error (BadInput, DoesNotExist), Exception)
@@ -43,7 +45,7 @@ import System.IO
 import qualified Types as T
 
 cleanup :: DB.DBAction a -> IO ()
-cleanup db_act = runContT db_act (\_ -> return ())
+cleanup db_act = return () --runContT db_act (\_ -> return ())
 
 addEntry :: T.Entry -> DB.Context -> DB.DBAction ()
 addEntry entry db_ctx = checkFileNotExists entry db_ctx >> DB.insert entry db_ctx
@@ -179,7 +181,7 @@ exportShelf :: T.Shelf -> DB.Context -> Maybe FilePath -> DB.DBAction ()
 exportShelf shelf db_ctx output_path = checkExists >> doExport
   where
     checkExists = checkShelfExists shelf db_ctx
-    doExport = ContT (withOutputHandle output_path) >>= IE.exportToHandle shelf db_ctx
+    doExport = withOutputHandle output_path $ IE.exportToHandle shelf db_ctx
 
 importShelf :: Maybe FilePath -> DB.Context -> DB.DBAction ()
 importShelf fp db_ctx =
@@ -263,18 +265,34 @@ listDirRecursive fp depth =
 addMany :: (DB.DBObject a) => [a] -> DB.Context -> DB.DBAction ()
 addMany = DB.insertMany
 
-getUniqueOutOf :: (DB.DBObject a) => [a] -> DB.Context -> DB.DBAction [Maybe a]
+getUniqueOutOf :: (DB.DBObject a) => [a] -> DB.Context -> DB.DBAction [a]
 getUniqueOutOf items db_ctx = existenceList
   where
-    existenceList =
-      mapM
-        ( \item ->
-            DB.exists item db_ctx >>= \exists ->
-              if exists
-                then return Nothing
-                else return (Just item)
-        )
-        items
+    existenceList = filterM (\item -> DB.exists item db_ctx) items
+
+{-existenceList =
+  mapM
+    ( \item ->
+        DB.exists item db_ctx >>= \exists ->
+          if exists
+            then return Nothing
+            else return (Just item)
+    )
+    items-}
 
 makeEntry :: Text -> FilePath -> IO T.Entry
 makeEntry name fp = T.Entry name <$> pack <$> DIR.makeAbsolute fp
+
+type ItemExistsMap a = [(a, Bool)]
+
+generateMapExists :: (DB.DBObject a) => DB.Context -> [a] -> DB.DBAction (ItemExistsMap a)
+generateMapExists db_ctx items = makeMap <$> generateExistsList
+  where
+    generateExistsList = mapM (\item -> DB.exists item db_ctx) items
+    makeMap exists = zip items exists
+
+notExistsOutOf :: [(a, Bool)] -> [a]
+notExistsOutOf items = [fst it | it <- items, not $ snd it]
+
+existsOutOf :: [(a, Bool)] -> [a]
+existsOutOf items = [fst it | it <- items, snd it]

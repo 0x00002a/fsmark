@@ -33,7 +33,7 @@ import Text.Printf (printf)
 import qualified Types as T
 
 runFSM :: IO ()
-runFSM = customExecParser p generateArgsInfo >>= \options -> (try $ FSM.cleanup $ parseOptions options) >>= handleExceptions
+runFSM = customExecParser p generateArgsInfo >>= \options -> (try $ parseOptions options) >>= handleExceptions
   where
     handleExceptions :: Either EX.Error () -> IO ()
     handleExceptions (Left exception) = putStrLn $ show exception
@@ -71,22 +71,23 @@ parseCommand (AddCmd paths chosen_name no_confirm True depth) ctx =
     >>= \entries -> FSM.addMany entries ctx
   where
     findEntries :: DB.DBAction [T.Entry]
-    findEntries = concat <$> (liftIO $ mapM (\path -> FSM.createEntriesRecursive path depth) paths)
+    findEntries = concat <$> (mapM (\path -> FSM.createEntriesRecursive path depth) paths)
     createEntries :: DB.DBAction [T.Entry]
     createEntries =
       findEntries
-        >>= \entries ->
-          (\names -> setNames entries names) <$> (filterEntries entries)
-    filterEntries :: [T.Entry] -> DB.DBAction [Text]
+        >>= filterEntries
+    filterEntries :: [T.Entry] -> DB.DBAction [T.Entry]
     filterEntries entries =
-      FSM.getUniqueOutOf entries ctx >>= getEntryNames
-    getEntryNames entries =
       if no_confirm
-        then return $ map T.name $ catMaybes entries
-        else liftIO $ mapM promptEntry entries
-    promptEntry :: Maybe T.Entry -> IO Text
-    promptEntry Nothing = namePrompt Nothing
-    promptEntry (Just ent) = namePrompt (Just $ T.name ent)
+        then FSM.generateMapExists ctx entries >>= \mapped -> printFailedEntries mapped >> (return $ FSM.notExistsOutOf mapped)
+        else liftIO $ confirmNames entries
+      where
+        printFailedEntries :: [(T.Entry, Bool)] -> DB.DBAction ()
+        printFailedEntries entries = mapM_ (printf "Cannot add '%s' because an entry with that name already exists\n") $ map T.name $ nonUniqueEntries entries
+        confirmNames = mapM promptEntry
+        nonUniqueEntries = FSM.existsOutOf
+    promptEntry :: T.Entry -> IO T.Entry
+    promptEntry ent = (\n -> ent {T.name = n}) <$> namePrompt (Just $ T.name ent)
     setNames entries names = map (\(name, entry) -> entry {T.name = name}) $ zip names entries
 parseCommand (Remove name no_confirm) ctx = liftIO getConfirm >>= removeDecider
   where

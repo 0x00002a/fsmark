@@ -73,12 +73,12 @@ class DBObject a where
   getName :: a -> Context -> DBAction Text
   retrieveAllLike :: Text -> Context -> DBAction [a]
   insertMany :: [a] -> Context -> DBAction ()
-  insertMany entries ctx = doInsert
+  insertMany entries ctx = SQL.withTransaction (conn ctx) doInsert
     where
       doInsert = mapM_ (\ent -> insert ent ctx) entries
 
 data Context = Context
-  { conn :: DBAction SQL.Connection,
+  { conn :: SQL.Connection,
     target_shelf :: Shelf,
     doing_dryrun :: Bool
   }
@@ -87,17 +87,17 @@ data ConnectionString = Path String | InMemory | DefaultDB
 
 data ConnectionType = Normal | DryRun
 
-type DBAction a = ContT () IO a
+type DBAction a = IO a --ContT () IO a
 
 type InternalShelfID = Integer
 
 execute :: (SQL.ToRow q) => Context -> SQL.Query -> q -> DBAction ()
 execute ctx query args
   | (doing_dryrun ctx) = return ()
-  | otherwise = (conn ctx) >>= \c -> liftIO $ SQL.execute c query args
+  | otherwise = SQL.execute (conn ctx) query args
 
 query :: (SQL.ToRow q, SQL.FromRow r) => Context -> SQL.Query -> q -> DBAction [r]
-query ctx query args = conn ctx >>= \c -> liftIO $ SQL.query c query args
+query ctx query args = SQL.query (conn ctx) query args
 
 instance SQL.FromRow T.Entry where
   fromRow = T.Entry <$> SQL.field <*> SQL.field
@@ -151,7 +151,7 @@ initDb :: SQL.Connection -> IO ()
 initDb conn = mapM_ (\sql -> SQL.execute_ conn $ SQL.Query sql) dbTables
 
 connect :: T.Shelf -> ConnectionString -> ConnectionType -> DBAction Context
-connect shelf conn_str conn_type = (liftIO getPath) >>= \p -> createContext $ ContT (SQL.withConnection p) >>= \conn -> liftIO $ (initAndGetShelfId conn) >> return conn
+connect shelf conn_str conn_type = getPath >>= \p -> SQL.open p >>= \conn -> putStrLn "Opened" >> initAndGetShelfId conn >> createContext conn
   where
     getPath = case conn_str of
       Path p -> checkAndEnsureExists p >> return p
@@ -199,7 +199,7 @@ nestedNth :: Int -> [[a]] -> a
 nestedNth n as = (\as2 -> as2 !! n) as !! n
 
 defaultShelfId :: Context -> DBAction Integer
-defaultShelfId context = nestedNth 0 <$> (conn context >>= \c -> liftIO $ SQL.query_ c "SELECT id FROM shelves WHERE is_default = 1")
+defaultShelfId context = nestedNth 0 <$> (liftIO $ SQL.query_ (conn context) "SELECT id FROM shelves WHERE is_default = 1")
 
 makeEntry :: Text -> Prelude.FilePath -> Context -> IO Entry
 makeEntry name path context = ctor <$> getDir
@@ -211,7 +211,7 @@ defaultShelfName :: Text
 defaultShelfName = "default"
 
 getAllShelfNames :: Context -> DBAction [Text]
-getAllShelfNames ctx = (\rs -> map (\rs2 -> rs2 !! 0) rs) <$> (conn ctx >>= \c -> liftIO $ SQL.query_ c "SELECT name FROM shelves")
+getAllShelfNames ctx = (\rs -> map (\rs2 -> rs2 !! 0) rs) <$> (SQL.query_ (conn ctx) "SELECT name FROM shelves")
 
 removeShelf :: Text -> Context -> DBAction ()
 removeShelf name ctx = execute ctx "DELETE FROM shelves WHERE name = ? AND is_default = 0" (Only name)
@@ -243,7 +243,7 @@ wipeDb :: Context -> DBAction ()
 wipeDb ctx =
   if (doing_dryrun ctx)
     then return ()
-    else conn ctx >>= \c -> liftIO $ SQL.execute_ c "DROP TABLE shelves" >> SQL.execute_ c "DROP TABLE files" >> initDb c
+    else SQL.execute_ (conn ctx) "DROP TABLE shelves" >> SQL.execute_ (conn ctx) "DROP TABLE files" >> initDb (conn ctx)
 
 targetShelfId :: Context -> DBAction Integer
 targetShelfId ctx = dbId (target_shelf ctx) ctx
