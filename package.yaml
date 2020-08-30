@@ -30,7 +30,7 @@ dependencies:
 - aeson
 - bytestring
 - mtl
-
+- Unique
 library:
   source-dirs: src
 

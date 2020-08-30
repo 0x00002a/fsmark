@@ -22,8 +22,7 @@ import Control.Exception (throw)
 import Control.Monad.Cont
 import Control.Monad.Cont (ContT (..))
 import qualified DB
-import Data.Map (Map (..))
-import qualified Data.Map as M
+import qualified Data.List.Unique as DU
 import Data.Maybe (catMaybes)
 import Data.Text (Text, append, pack, unpack)
 import Exceptions (Error (BadInput, DoesNotExist), Exception)
@@ -31,6 +30,7 @@ import qualified Exceptions as EX
 import qualified ImportExport as IE
 import qualified Json as J
 import qualified System.Directory as DIR
+import System.FilePath (combine)
 import qualified System.FilePath as FP
 import System.IO
   ( FilePath,
@@ -256,18 +256,24 @@ dirExistsOrError dir =
       else throw $ EX.TextError $ (pack dir) `append` " does not exist"
 
 listDir :: FilePath -> IO [FilePath]
-listDir dir = DIR.listDirectory dir
+listDir dir =
+  checkSearchable dir >>= \ok ->
+    if ok
+      then DIR.listDirectory dir >>= \paths -> mapM DIR.canonicalizePath $ map (combine dir) paths
+      else return []
 
 listDirRecursive :: FilePath -> Integer -> IO [FilePath]
 listDirRecursive _ 0 = return []
-listDirRecursive fp depth =
-  ( DIR.makeAbsolute fp
-      >>= (\path -> listDir path)
-      >>= \paths ->
-        filterDirs paths
-          >>= exploreNextLevel
-          >>= \next_paths -> return $ next_paths ++ paths
-  )
+listDirRecursive fp depth
+  | depth < 0 = throw $ BadInput "Depth must be non-negative"
+  | otherwise =
+    ( DIR.makeAbsolute fp
+        >>= (\path -> listDir path)
+        >>= \paths ->
+          filterDirs paths
+            >>= exploreNextLevel
+            >>= \next_paths -> return $ next_paths ++ paths
+    )
   where
     filterDirs paths = filterM DIR.doesDirectoryExist paths
     exploreNextLevel paths = concat <$> mapM (\p -> listDirRecursive p (depth - 1)) paths
@@ -306,3 +312,9 @@ notExistsOutOf items = [fst it | it <- items, not $ snd it]
 
 existsOutOf :: [(a, Bool)] -> [a]
 existsOutOf items = [fst it | it <- items, snd it]
+
+checkSearchable :: FilePath -> IO Bool
+checkSearchable fp = DIR.searchable <$> DIR.getPermissions fp
+
+extractDuplicates :: (Eq a, Ord a) => [a] -> ([a], [a])
+extractDuplicates items = (DU.unique items, DU.repeated items)

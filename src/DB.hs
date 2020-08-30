@@ -157,7 +157,7 @@ connect shelf conn_str conn_type = getPath >>= \p -> SQL.open p >>= \conn -> ini
       Path p -> checkAndEnsureExists p >> return p
       InMemory -> return ":memory:"
       DefaultDB -> dbPath
-    checkAndEnsureExists p = DIR.doesFileExist p >>= ensureExists p
+    checkAndEnsureExists p = return () -- DIR.doesFileExist p >>= ensureExists p
     initAndGetShelfId = case conn_type of
       Normal -> \ctx -> initDb ctx
       DryRun -> \ctx -> return ()

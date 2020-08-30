@@ -79,13 +79,14 @@ parseCommand (AddCmd paths chosen_name no_confirm True depth) ctx =
     filterEntries :: [T.Entry] -> DB.DBAction [T.Entry]
     filterEntries entries =
       if no_confirm
-        then FSM.generateMapExists ctx entries >>= \mapped -> printFailedEntries mapped >> (return $ FSM.notExistsOutOf mapped)
+        then FSM.generateMapExists ctx entries >>= \mapped -> printFailedEntries mapped >> (return $ fst $ FSM.extractDuplicates $ FSM.notExistsOutOf mapped)
         else liftIO $ confirmNames entries
       where
         printFailedEntries :: [(T.Entry, Bool)] -> DB.DBAction ()
         printFailedEntries entries = mapM_ (printf "Cannot add '%s' because an entry with that name already exists\n") $ map T.name $ nonUniqueEntries entries
         confirmNames = mapM promptEntry
-        nonUniqueEntries = FSM.existsOutOf
+        dupes = FSM.extractDuplicates entries
+        nonUniqueEntries entries = snd dupes ++ FSM.existsOutOf entries
     promptEntry :: T.Entry -> IO T.Entry
     promptEntry ent = (\n -> ent {T.name = n}) <$> namePrompt (Just $ T.name ent)
     setNames entries names = map (\(name, entry) -> entry {T.name = name}) $ zip names entries
