@@ -151,7 +151,7 @@ initDb :: SQL.Connection -> IO ()
 initDb conn = mapM_ (\sql -> SQL.execute_ conn $ SQL.Query sql) dbTables
 
 connect :: T.Shelf -> ConnectionString -> ConnectionType -> DBAction Context
-connect shelf conn_str conn_type = getPath >>= \p -> SQL.open p >>= \conn -> putStrLn "Opened" >> initAndGetShelfId conn >> createContext conn
+connect shelf conn_str conn_type = getPath >>= \p -> SQL.open p >>= \conn -> initAndGetShelfId conn >> createContext conn
   where
     getPath = case conn_str of
       Path p -> checkAndEnsureExists p >> return p

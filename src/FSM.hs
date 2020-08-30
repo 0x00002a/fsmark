@@ -50,8 +50,8 @@ cleanup db_act = return () --runContT db_act (\_ -> return ())
 addEntry :: T.Entry -> DB.Context -> DB.DBAction ()
 addEntry entry db_ctx = checkFileNotExists entry db_ctx >> DB.insert entry db_ctx
 
-copyEntry :: T.Shelf -> T.Shelf -> Text -> DB.Context -> DB.DBAction ()
-copyEntry from to entry db_ctx =
+copyEntryByName :: T.Shelf -> T.Shelf -> Text -> DB.Context -> DB.DBAction ()
+copyEntryByName from to entry db_ctx =
   if from == to
     then throw $ BadInput "Source and destination shelves must be different"
     else existsCheck >> (\src -> doCopy to (DB.changeTargetShelf src db_ctx)) from
@@ -107,6 +107,16 @@ checkExists item db_ctx = DB.exists item db_ctx >>= doCheck
           DB.getName item db_ctx
             >>= \name -> liftIO $ throw $ EX.TextError $ name `append` " does not exist"
 
+copyEntry :: T.Shelf -> T.Shelf -> T.Entry -> DB.Context -> IO ()
+copyEntry from to ent = copyEntryByName from to (T.name ent)
+
+moveEntry :: T.Shelf -> T.Shelf -> T.Entry -> DB.Context -> IO ()
+moveEntry from to ent db_ctx =
+  copyEntry from to ent db_ctx
+    >> ( removeEntryByName (T.name ent) $
+           DB.changeTargetShelf from db_ctx
+       )
+
 checkEntryExistsByName :: Text -> DB.Context -> DB.DBAction ()
 checkEntryExistsByName entry_name ctx = liftIO (DB.makeEntry entry_name "" ctx) >>= \entry -> checkEntryExists entry ctx
 
@@ -160,7 +170,7 @@ makeConnType True = DB.DryRun
 makeConnType False = DB.Normal
 
 moveEntryByName :: Text -> Text -> Text -> DB.Context -> DB.DBAction ()
-moveEntryByName from to name ctx = copyEntry (T.ShelfName from) (T.ShelfName to) name ctx >> removeEntryByName name ctx
+moveEntryByName from to name ctx = copyEntryByName (T.ShelfName from) (T.ShelfName to) name ctx >> removeEntryByName name ctx
 
 withOutputHandle :: Maybe FilePath -> (Handle -> IO r) -> IO r
 withOutputHandle (Just "-") act = act stdout

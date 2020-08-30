@@ -101,7 +101,7 @@ parseCommand (Remove name no_confirm) ctx = liftIO getConfirm >>= removeDecider
         else return ()
 parseCommand (ShelfCmd cmd) ctx = parseShelvesCmd cmd ctx
 parseCommand (MoveCmd from to name) ctx = FSM.moveEntryByName from to name ctx
-parseCommand (CopyCmd from to name) ctx = FSM.copyEntry (T.ShelfName from) (T.ShelfName to) name ctx
+parseCommand (CopyCmd from to name) ctx = FSM.copyEntryByName (T.ShelfName from) (T.ShelfName to) name ctx
 parseCommand (RenameCmd from to) ctx = FSM.renameEntryByName from to ctx
 parseCommand (VersionCmd) _ = liftIO Pretty.printVersionInfo
 parseCommand (ViewLicenseCmd) _ = liftIO Pretty.printLicense
