@@ -66,6 +66,14 @@ fsm list -s anything_starting_with_this*
 
 ## Examples
 
+The [fsm utils](/scripts/fsm_utils.sh) script contains sh functions for aliasing frequently used fsm commands. It currently includes:
+
+- `jmp`: Alias for `cd $(fsm fp <path>)`
+- `catm`: Alias for `cat $(fsm fp <path>)`
+- `editm`: Alias for `$EDITOR $(fsm fp <path>)`
+
+The script is not included in the installer and doesn't work on windows, it is more an example of how fsm can be utilized through wrapper scripts. (If anybody can write an equivalent powershell script that would be awesome).
+
 ### Creating every directory listed on a specified shelf
 
 ```bash

@@ -18,12 +18,14 @@
 
 module Exceptions where
 
+import qualified Control.Exception as EX
 import Control.Monad.Except (ExceptT)
 import Data.Text (Text, append, unpack)
 import Text.Printf (printf)
+import Type.Reflection (Typeable)
 import qualified Types as T
 
-data InfoType = Shelf Text | Entry Text
+data InfoType = Shelf Text | Entry Text deriving (Show, Typeable)
 
 data Error
   = BadInput Text
@@ -31,6 +33,8 @@ data Error
   | DoesNotExist InfoType
   | NamingConflict InfoType
   | NotUnique Text
+  | TextError Text
+  deriving (Typeable)
 
 type Exception = ExceptT Error
 
@@ -39,6 +43,26 @@ printError (BadInput msg) = putStrLn $ unpack msg
 printError (DBError msg) = printf "Database error: %s\n" msg
 printError (DoesNotExist e) = printf "%s does not exist\n" $ infoTMsg e
 printError (NamingConflict e) = printf "%s already exists\n" $ infoTMsg e
+printError (TextError txt) = putStrLn $ unpack txt
 
-infoTMsg (Shelf name) = "Shelf '" `append` name `append` "'"
-infoTMsg (Entry name) = "Entry '" `append` name `append` "'"
+showError :: Error -> Text
+showError (BadInput msg) = msg
+showError (DBError msg) = "Database error: " `append` msg
+showError (DoesNotExist e) = (infoTMsg e) `append` " does not exist"
+showError (NamingConflict e) = (infoTMsg e) `append` " already exists"
+showError (TextError txt) = txt
+
+surroundWith :: Text -> Text -> Text
+surroundWith ch txt = ch `append` txt `append` ch
+
+quote :: Text -> Text
+quote = surroundWith "'"
+
+infoTMsg :: InfoType -> Text
+infoTMsg (Shelf name) = "Shelf " `append` quote name
+infoTMsg (Entry name) = "Entry " `append` quote name
+
+instance EX.Exception Error
+
+instance Show Error where
+  show err = unpack $ showError err
