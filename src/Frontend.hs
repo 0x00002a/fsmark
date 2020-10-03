@@ -46,7 +46,6 @@ import qualified Types                         as T
 import           Control.Monad                  ( unless
                                                 , when
                                                 )
-import qualified Sys
 
 runFSM :: IO ()
 runFSM = customExecParser p generateArgsInfo
@@ -75,13 +74,9 @@ parseCommand (List path_only match) ctx = FSM.getAll ctx match >>= printItems
   where
     printItems [] = case match of
         Just m ->
-            liftIO
-                $        throw
-                $        EX.TextError
-                $        "No items matching '"
-                `append` m
-                `append` "'"
+            throw $ EX.TextError $ "No items matching '" `append` m `append` "'"
         Nothing -> return ()
+
     printItems items = liftIO $ pathsPrinter path_only items
 parseCommand (AddCmd [path] chosen_name no_confirm False _) ctx = getEntry
     >>= \ent -> FSM.addEntry ent ctx
@@ -165,7 +160,7 @@ extractPaths :: [T.Entry] -> [Text]
 extractPaths = map DB.path
 
 pathsPrinter :: Bool -> [T.Entry] -> IO ()
-pathsPrinter False files = Pretty.printList $ extractPaths files
+pathsPrinter False files = mapM_ Pretty.printPath $ extractPaths files
 pathsPrinter True  files = Pretty.printList files
 
 getConfirmationYesNo :: Text -> IO Bool

@@ -36,7 +36,7 @@ instance PrettyPrintable Text where
 instance Pretty.PrettyPrintable T.Entry where
     display f = printf "Name: %s\nPath: %s\n\n"
                        (T.name f)
-                       (Sys.escapePath (T.path f) Sys.os)
+                       (Sys.escapePath (unpack (T.path f)) Sys.os)
 
 instance Pretty.PrettyPrintable T.Shelf where
     display (T.ShelfName name) = display $ "Name: " `append` name
@@ -71,4 +71,8 @@ licenseStr =
 
 printLicense :: IO ()
 printLicense = mapM_ putStrLn licenseStr
+
+
+printPath :: Text -> IO ()
+printPath path = putStrLn $ Sys.escapePath (unpack path) Sys.os
 
