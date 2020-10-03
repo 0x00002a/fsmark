@@ -24,6 +24,7 @@ module Sys
 where
 
 import qualified System.Info                   as SI
+import qualified System.Directory              as DIR
 
 
 data OS = Windows | Unix | Unknown deriving(Eq, Show)
@@ -50,4 +51,6 @@ osFromStr "linux"   = Unix
 osFromStr "darwin"  = Unix
 osFromStr _         = Unknown
 
-
+expandPath :: Filepath -> IO FilePath
+expandPath ['~' : fp] = ((++) fp) <$> Dir.getHomeDirectory
+expandPath fp         = return fp
