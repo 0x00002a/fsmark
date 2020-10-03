@@ -37,6 +37,7 @@ import           TestsDB                        ( resetDb
                                                 , testDb
                                                 )
 import qualified Types                         as T
+import qualified System.Directory              as DIR
 
 assertDBItemExists :: (DB.DBObject a) => a -> DB.Context -> IO ()
 assertDBItemExists entry ctx =
@@ -209,6 +210,10 @@ osFromStrTest = TestCase $ winTest >> linuxTest >> macTest >> unknownTest
     unknownTest = assertEqual "Unknown OS is detected" Sys.Unknown
         $ Sys.osFromStr "obscureOsName"
 
+expandPathTest = TestCase $ homeDir >>= \home ->
+    Sys.expandPath "~/file.txt" >>= \expanded ->
+        assertEqual "Path expands properly" (home ++ "/file.txt") expanded
+    where homeDir = DIR.getHomeDirectory
 
 tests = TestList
     [ TestLabel "Add entry"                            addEntryTest
@@ -226,6 +231,7 @@ tests = TestList
     , TestLabel "Create entry"                         createEntryTest
     , TestLabel "Escaping paths works"                 escapePathsTest
     , TestLabel "Reading OS from string works"         osFromStrTest
+    , TestLabel "Expanding paths works"                expandPathTest
     ]
 
 main :: IO Counts

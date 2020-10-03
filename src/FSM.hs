@@ -49,6 +49,7 @@ import           System.IO                      ( FilePath
                                                 , withFile
                                                 )
 import qualified Types                         as T
+import qualified Sys
 
 
 
@@ -259,7 +260,8 @@ getUniqueOutOf items db_ctx = existenceList
     where existenceList = filterM (`DB.exists` db_ctx) items
 
 makeEntry :: Text -> FilePath -> IO T.Entry
-makeEntry name fp = T.Entry name . pack <$> DIR.makeAbsolute fp
+makeEntry name fp =
+    T.Entry name . pack <$> (Sys.expandPath fp >>= DIR.makeAbsolute)
 
 type ItemExistsMap a = [(a, Bool)]
 

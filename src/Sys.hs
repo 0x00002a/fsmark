@@ -20,6 +20,7 @@ module Sys
     , escapePath
     , osFromStr
     , os
+    , expandPath
     )
 where
 
@@ -51,6 +52,6 @@ osFromStr "linux"   = Unix
 osFromStr "darwin"  = Unix
 osFromStr _         = Unknown
 
-expandPath :: Filepath -> IO FilePath
-expandPath ['~' : fp] = ((++) fp) <$> Dir.getHomeDirectory
+expandPath :: FilePath -> IO FilePath
+expandPath ('~' : fp) = (++ fp) <$> DIR.getHomeDirectory
 expandPath fp         = return fp
