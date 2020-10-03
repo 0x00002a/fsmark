@@ -19,6 +19,7 @@ module Sys
     ( OS(..)
     , escapePath
     , osFromStr
+    , os
     )
 where
 

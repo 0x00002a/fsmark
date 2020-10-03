@@ -25,6 +25,7 @@ import           Data.Text                      ( Text
                                                 )
 import           Text.Printf                    ( printf )
 import qualified Types                         as T
+import qualified Sys
 
 class PrettyPrintable a where
   display :: a -> IO ()
@@ -33,7 +34,9 @@ instance PrettyPrintable Text where
     display txt = putStrLn $ unpack txt
 
 instance Pretty.PrettyPrintable T.Entry where
-    display f = printf "Name: %s\nPath: %s\n\n" (T.name f) (T.path f)
+    display f = printf "Name: %s\nPath: %s\n\n"
+                       (T.name f)
+                       (Sys.escapePath (T.path f) Sys.os)
 
 instance Pretty.PrettyPrintable T.Shelf where
     display (T.ShelfName name) = display $ "Name: " `append` name
@@ -68,3 +71,4 @@ licenseStr =
 
 printLicense :: IO ()
 printLicense = mapM_ putStrLn licenseStr
+
