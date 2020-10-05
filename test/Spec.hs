@@ -196,7 +196,7 @@ escapePathsTest = TestCase $ winTest >> unixTest >> unknownTest
                            "/home\\ /test"
                            (Sys.escapePath "/home /test" Sys.Unix)
     unknownTest = assertEqual "Unknown system path escaped"
-                              "/home\" \"/test"
+                              "\"/home /test\""
                               (Sys.escapePath "/home /test" Sys.Unknown)
 
 
