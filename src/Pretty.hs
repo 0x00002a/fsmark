@@ -16,7 +16,14 @@
 -- along with file-shelf.  If not, see <http://www.gnu.org/licenses/>.
 {-# LANGUAGE OverloadedStrings #-}
 
-module Pretty where
+module Pretty
+    ( PrettyPrintable(..)
+    , printList
+    , printLicense
+    , printPath
+    , printVersionInfo
+    )
+where
 
 import           Data.Text                      ( Text
                                                 , append
@@ -46,7 +53,7 @@ printList :: (PrettyPrintable a) => [a] -> IO ()
 printList = mapM_ display
 
 versionString :: Text
-versionString = "0.5.0"
+versionString = "0.5.1"
 
 printVersionInfo :: IO ()
 printVersionInfo = printf "fsm (version %s)\n" versionString
@@ -74,5 +81,12 @@ printLicense = mapM_ putStrLn licenseStr
 
 
 printPath :: Text -> IO ()
-printPath path = putStrLn $ Sys.escapePath (unpack path) Sys.os
+printPath path = Sys.currentOutputMode >>= printPathWithMode path
+
+printPathWithMode :: Text -> Sys.OutputMode -> IO ()
+printPathWithMode path Sys.PipedOutput = putStrLn $ unpack path
+printPathWithMode path Sys.TermOutput =
+    putStrLn $ Sys.escapePath (unpack path) Sys.os
+
+
 

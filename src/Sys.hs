@@ -21,17 +21,29 @@ module Sys
     , osFromStr
     , os
     , expandPath
+    , OutputMode(..)
+    , currentOutputMode
     )
 where
 
 import qualified System.Info                   as SI
 import qualified System.Directory              as DIR
+import qualified System.IO                     as SIO
 
 
 data OS = Windows | Unix | Unknown deriving(Eq, Show)
 
+data OutputMode = TermOutput | PipedOutput
+
+currentOutputMode :: IO OutputMode
+currentOutputMode = SIO.hIsTerminalDevice SIO.stdout >>= isTerm
+  where
+    isTerm True  = return TermOutput
+    isTerm False = return PipedOutput
+
 
 escapePath :: FilePath -> OS -> FilePath
+escapePath path Unknown  = "\"" ++ path ++ "\""
 escapePath path platform = concatMap (`escapeSegment` platform) path
 
 
@@ -55,3 +67,5 @@ osFromStr _         = Unknown
 expandPath :: FilePath -> IO FilePath
 expandPath ('~' : fp) = (++ fp) <$> DIR.getHomeDirectory
 expandPath fp         = return fp
+
+
