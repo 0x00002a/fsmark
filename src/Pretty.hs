@@ -81,12 +81,6 @@ printLicense = mapM_ putStrLn licenseStr
 
 
 printPath :: Text -> IO ()
-printPath path = Sys.currentOutputMode >>= printPathWithMode path
-
-printPathWithMode :: Text -> Sys.OutputMode -> IO ()
-printPathWithMode path Sys.PipedOutput = putStrLn $ unpack path
-printPathWithMode path Sys.TermOutput =
-    putStrLn $ Sys.escapePath (unpack path) Sys.os
-
+printPath path = putStrLn $ unpack path
 
 
