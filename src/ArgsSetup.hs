@@ -18,7 +18,7 @@
 
 module ArgsSetup
     ( generateArgsInfo
-    , ArgsResult(ArgsResult)
+    , ArgsResult(..)
     , ShelfArgs(..)
     , Command(..)
     )
@@ -49,6 +49,8 @@ import qualified Options.Applicative           as O
 
 data ArgsResult
   = ArgsResult Command (Maybe Text) (Maybe Text) Bool
+  | VersionCheck Bool
+  | LicenseCheck Bool
 
 data ShelfArgs
   = AddShelf Text
@@ -136,11 +138,11 @@ mainCommands =
         <|> generateDescSubParser
                 [ ("Misc commands", "", Nothing)
                 , ( "version"
-                  , "Print version information"
+                  , "Display version information"
                   , Just $ pure VersionCmd
                   )
                 , ( "license"
-                  , "Print license information"
+                  , "Display license information"
                   , Just $ pure ViewLicenseCmd
                   )
                 ]
@@ -205,7 +207,15 @@ fsmDesc =
 makeArgsInfo :: O.Parser Command -> O.ParserInfo ArgsResult
 makeArgsInfo cmd = O.info (args <**> helper) (O.fullDesc <> fsmDesc)
   where
-    args = cmdArgs
+    args = cmdArgs <|> versionArgs <|> licenseArg
+
+    versionArgs :: O.Parser ArgsResult
+    versionArgs = VersionCheck
+        <$> switch (long "version" <> help "Display version information")
+
+    licenseArg :: O.Parser ArgsResult
+    licenseArg = LicenseCheck
+        <$> switch (long "license" <> help "Display license information")
 
     cmdArgs =
         ArgsResult

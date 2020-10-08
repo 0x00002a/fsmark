@@ -68,6 +68,8 @@ parseOptions (ArgsResult cmd tshelf db_path dry_run) =
     parseTargetShelf db_path (Just name) =
         FSM.connectToDb (Just (T.ShelfName name)) db_path
     parseTargetShelf db_path Nothing = FSM.connectToDb Nothing db_path
+parseOptions (VersionCheck _) = Pretty.printVersionInfo
+parseOptions (LicenseCheck _) = Pretty.printLicense
 
 parseCommand :: Command -> DB.Context -> DB.DBAction ()
 parseCommand (List path_only match) ctx = FSM.getAll ctx match >>= printItems
