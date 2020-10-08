@@ -129,22 +129,11 @@ mainCommands =
             , ("move", "Move an entry to a different shelf", Just moveEntryOpts)
             , ("copy", "Copy an entry to a different shelf", Just copyEntryOpts)
             , ("rename", "Rename an entry", Just renameEntryOpts)
-            , ("fp", "Print path for entry with exact NAME", Just pathPrintOpts)
+            , ("fp", "Display path for entry matching NAME", Just pathPrintOpts)
             ]
         <|> generateDescSubParser
                 [ ("Shelf commands", ""                  , Nothing)
                 , ("shelves"       , "Operate on shelves", Just shelfCommands)
-                ]
-        <|> generateDescSubParser
-                [ ("Misc commands", "", Nothing)
-                , ( "version"
-                  , "Display version information"
-                  , Just $ pure VersionCmd
-                  )
-                , ( "license"
-                  , "Display license information"
-                  , Just $ pure ViewLicenseCmd
-                  )
                 ]
   where
     makeDesc (name, desc, opts) = SubParserDesc name desc opts
