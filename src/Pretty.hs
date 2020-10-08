@@ -15,6 +15,7 @@
 -- You should have received a copy of the GNU General Public License
 -- along with file-shelf.  If not, see <http://www.gnu.org/licenses/>.
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 
 module Pretty
     ( PrettyPrintable(..)
@@ -53,10 +54,11 @@ printList :: (PrettyPrintable a) => [a] -> IO ()
 printList = mapM_ display
 
 versionString :: Text
-versionString = "0.5.1"
+versionString = VERSION_fsmark 
 
 printVersionInfo :: IO ()
-printVersionInfo = printf "fsm (version %s)\n" versionString
+printVersionInfo = printf "fsm version %s" versionString
+
 
 licenseStr =
     [ "fsm - A bookmarker for your filesystem"
