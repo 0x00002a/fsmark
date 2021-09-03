@@ -14,10 +14,11 @@
 --
 -- You should have received a copy of the GNU General Public License
 -- along with fsmark.  If not, see <http://www.gnu.org/licenses/>.
+{-# LANGUAGE OverloadedStrings #-}
 
 module Paths (shelvesPath, Path, shelfPath) where
 
-import Data.Text (Text, pack, unpack)
+import Data.Text (Text, append, pack, unpack)
 import qualified System.Directory as DIR
 import System.FilePath ((</>))
 import qualified Types as T
@@ -25,9 +26,13 @@ import qualified Types as T
 type Path = Text
 
 shelvesPath :: IO FilePath
-shelvesPath = ((</>) "shelves" <$> base)
+shelvesPath = (\p1 -> p1 </> "shelves") <$> base
   where
     base = DIR.getXdgDirectory DIR.XdgData "fsm" >>= \p -> DIR.createDirectoryIfMissing True p >> return p
 
 shelfPath :: T.Shelf -> IO FilePath
-shelfPath shelf = (((</>) ((unpack (T.s_name shelf)) ++ ".shelf.json")) <$> shelvesPath)
+shelfPath shelf = doAppend <$> shelvesPath
+  where
+    name = T.s_name shelf
+    fname = name `append` ".shelf.json"
+    doAppend base = base </> unpack fname
