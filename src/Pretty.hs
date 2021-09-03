@@ -15,6 +15,7 @@
 -- You should have received a copy of the GNU General Public License
 -- along with file-shelf.  If not, see <http://www.gnu.org/licenses/>.
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 
 module Pretty
     ( PrettyPrintable(..)
@@ -46,14 +47,13 @@ instance Pretty.PrettyPrintable T.Entry where
                        (Sys.escapePath (unpack (T.path f)) Sys.os)
 
 instance Pretty.PrettyPrintable T.Shelf where
-    display (T.ShelfName name) = display $ "Name: " `append` name
-    display (T.ShelfID   id  ) = display $ "ID: " `append` pack (show id)
+    display shelf = display $ "Name: " `append` T.s_name shelf
 
 printList :: (PrettyPrintable a) => [a] -> IO ()
 printList = mapM_ display
 
 versionString :: Text
-versionString = "0.5.1"
+versionString = VERSION_fsmark
 
 printVersionInfo :: IO ()
 printVersionInfo = printf "fsm (version %s)\n" versionString

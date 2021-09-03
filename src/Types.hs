@@ -1,6 +1,6 @@
 module Types
   ( Entry (Entry, name, path),
-    Shelf (ShelfID, ShelfName),
+    Shelf(..),
     Types.FilePath (..),
   )
 where
@@ -15,10 +15,7 @@ data Entry = Entry
   }
   deriving (Ord)
 
-data Shelf
-  = ShelfID Integer
-  | ShelfName Text
-  deriving (Show, Eq)
+data Shelf = Shelf {s_name :: Text, s_entries :: [Entry]} deriving (Eq)
 
 instance Show Entry where
   show f = "Name: " ++ unpack (name f) ++ "\nPath: " ++ unpack (path f)

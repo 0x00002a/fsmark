@@ -21,7 +21,8 @@ module ImportExport
     ( Exportable(formatForExport)
     , exportToHandle
     , importFromHandle
-    , importShelfFromHandleRaw
+    , importShelfFromHandleRaw,
+    exportToFile
     )
 where
 
@@ -30,7 +31,6 @@ import           Control.Exception              ( throw )
 import qualified Control.Exception             as CE
                                                 ( handle )
 import           Control.Monad.IO.Class         ( MonadIO(liftIO) )
-import qualified DB
 import           Data.ByteString.Lazy           ( ByteString )
 import qualified Data.ByteString.Lazy          as B
 import           Data.Text                      ( Text )
@@ -39,39 +39,26 @@ import qualified Exceptions                    as EX
 import qualified Json                          as J
 import           System.IO                      ( Handle )
 import qualified Types                         as T
+import Data.Aeson (encode, decode)
 
 class Exportable a where
-  formatForExport :: a -> DB.Context -> DB.DBAction ByteString
-  importFromText :: B.ByteString -> DB.Context -> DB.DBAction a
+  formatForExport :: a -> ByteString
+  importFromText :: B.ByteString -> Maybe a
 
 instance Exportable T.Shelf where
-    formatForExport = J.shelfToJson
-    importFromText txt db_ctx =
-        liftIO (J.shelfFromJson txt) >>= \(shelf, entries) ->
-            checkNotExists shelf
-                >> (  DB.insert shelf db_ctx
-                   >> DB.insertMany entries (dest_ctx shelf)
-                   >> return shelf
-                   )
-      where
-        checkNotExists shelf@(T.ShelfName shelf_name) =
-            DB.exists shelf db_ctx
-                >>= \exists ->
-                        when exists $ throw $ EX.NamingConflict $ EX.Shelf
-                            shelf_name
-        dest_ctx shelf = DB.changeTargetShelf shelf db_ctx
+    formatForExport = encode
+    importFromText = decode
 
-exportToFile :: (Exportable a) => a -> DB.Context -> FilePath -> DB.DBAction ()
-exportToFile target ctx path = formatForExport target ctx >>= B.writeFile path
 
-exportToHandle :: (Exportable a) => a -> DB.Context -> Handle -> DB.DBAction ()
-exportToHandle target ctx handle =
-    formatForExport target ctx >>= \i -> liftIO $ B.hPut handle i
+exportToFile :: (Exportable a) => a -> FilePath -> IO ()
+exportToFile target path = B.writeFile path (formatForExport target)
 
-importFromHandle :: (Exportable a) => Handle -> DB.Context -> DB.DBAction a
-importFromHandle handle db_ctx =
-    B.hGetContents handle >>= \content -> importFromText content db_ctx
+exportToHandle :: (Exportable a) => a -> Handle -> IO ()
+exportToHandle target handle = B.hPut handle (formatForExport target)
 
-importShelfFromHandleRaw :: Handle -> DB.DBAction (T.Shelf, [T.Entry])
-importShelfFromHandleRaw handle = B.hGetContents handle >>= J.shelfFromJson
+importFromHandle :: (Exportable a) => Handle -> IO (Maybe a)
+importFromHandle handle = importFromText <$> B.hGetContents handle
+
+importShelfFromHandleRaw :: Handle -> IO (Maybe T.Shelf)
+importShelfFromHandleRaw = importFromHandle
 

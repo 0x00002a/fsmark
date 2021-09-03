@@ -23,7 +23,7 @@ import           Control.Monad.Cont
 import qualified DB
 import qualified Data.List.Unique              as DU
 import           Data.Maybe                     ( catMaybes
-                                                , fromMaybe
+                                                , fromMaybe, isJust
                                                 )
 import           Data.Text                      ( Text
                                                 , append
@@ -50,118 +50,98 @@ import           System.IO                      ( FilePath
                                                 )
 import qualified Types                         as T
 import qualified Sys
+import Data.List (find, filter)
 
 
+addEntry :: T.Entry -> T.Shelf -> T.Shelf
+addEntry entry shelf = shelf { T.s_entries = (T.s_entries shelf ++ [entry]) }
 
-cleanup :: DB.DBAction a -> IO ()
-cleanup db_act = return () --runContT db_act (\_ -> return ())
+copyEntryByName' :: Text -> Text -> Text -> IO T.Shelf
+copyEntryByName' from to ent = 
+    DB.loadShelfFromName from 
+    >>= \fshelf -> DB.loadShelfFromName to 
+    >>= \tshelf -> doCopy fshelf tshelf
+    where 
+        doCopy (Just f) (Just t) = copyEntryByName f t ent
+        doCopy Nothing _ = throw $ EX.DoesNotExist $ EX.Shelf from
+        doCopy _ Nothing = throw $ EX.DoesNotExist $ EX.Shelf to
 
-addEntry :: T.Entry -> DB.Context -> DB.DBAction ()
-addEntry entry db_ctx =
-    checkFileNotExists entry db_ctx >> DB.insert entry db_ctx
-
-copyEntryByName :: T.Shelf -> T.Shelf -> Text -> DB.Context -> DB.DBAction ()
-copyEntryByName from to entry db_ctx = if from == to
+copyEntryByName :: T.Shelf -> T.Shelf -> Text -> IO T.Shelf
+copyEntryByName from to entry = if from == to
     then throw $ BadInput "Source and destination shelves must be different"
-    else existsCheck
-        >> (\src -> doCopy to (DB.changeTargetShelf src db_ctx)) from
+    else existsCheck >> doCopy
   where
-    doCopy to src_ctx = DB.copyEntry from to entry db_ctx
-    existsCheck = checkShelfExists from db_ctx >> checkShelfExists to db_ctx
+    doCopy = doAdd $ find (\e -> T.name e == entry) (T.s_entries from) 
+    doAdd (Just ent) = return $ addEntry ent to 
+    existsCheck = checkShelfExists (T.s_name from) >> checkShelfExists (T.s_name to) 
 
-getAll :: (DB.DBObject a) => DB.Context -> Maybe Text -> DB.DBAction [a]
-getAll db_ctx (Just name_filter) = DB.retrieveAllLike name_filter db_ctx
-getAll db_ctx Nothing            = DB.retrieveAll db_ctx
+entriesMatching :: T.Shelf -> Maybe Text -> [T.Entry] 
+entriesMatching shelf _ = T.s_entries shelf
 
-checkShelfExists :: T.Shelf -> DB.Context -> DB.DBAction ()
-checkShelfExists shelf db_ctx = DB.exists shelf db_ctx >>= \exists ->
-    liftIO $ if exists
-        then return ()
-        else throw $ EX.DoesNotExist $ EX.Shelf $ getShelfName shelf
-  where
-    getShelfName (T.ShelfName n) = n
-    getShelfName (T.ShelfID   _) = "Unknown"
+checkShelfExists :: Text -> IO ()
+checkShelfExists shelf = DB.shelfExists shelf >>= check
+    where 
+        check False = throw $ EX.DoesNotExist $ EX.Shelf shelf
+        check True = return ()
 
-renameShelfByName :: Text -> Text -> DB.Context -> DB.DBAction ()
-renameShelfByName from to db_ctx =
-    checkShelfExists shelf db_ctx >> DB.rename shelf to db_ctx
-    where shelf = T.ShelfName from
+renameShelfByName :: Text -> Text -> IO ()
+renameShelfByName from to = 
+    checkShelfExists from >> DB.loadShelfFromName from >>= save
+    where 
+        save (Just shelf) = DB.saveShelfDefault (shelf { T.s_name = to })  
 
-removeEntryByName :: Text -> DB.Context -> DB.DBAction ()
-removeEntryByName entry db_ctx =
-    checkEntryExistsByName entry db_ctx >> DB.removeFile entry db_ctx
+entryNameMatches :: Text -> T.Entry -> Bool
+entryNameMatches name ent = T.name ent == name  
 
-removeItem :: (DB.DBObject a) => a -> DB.Context -> DB.DBAction ()
-removeItem item db_ctx = checkExists item db_ctx >> DB.remove item db_ctx
+entryNameNotMatches :: Text -> T.Entry -> Bool
+entryNameNotMatches t e = not $ entryNameMatches t e
 
-removeShelfByName :: Text -> DB.Context -> DB.DBAction ()
-removeShelfByName name = removeItem (T.ShelfName name)
+removeEntryByName :: T.Shelf -> Text -> T.Shelf 
+removeEntryByName from entry = from { T.s_entries = filter (entryNameNotMatches entry) (T.s_entries from) }
 
-renameEntryByName :: Text -> Text -> DB.Context -> DB.DBAction ()
-renameEntryByName from to db_ctx =
-    checkEntryExistsByName from db_ctx >> DB.getFiles from db_ctx >>= \files ->
-        DB.rename (head files) to db_ctx
+removeShelfByName :: Text -> IO ()
+removeShelfByName name = DB.removeShelf name
 
-checkExists :: (DB.DBObject a) => a -> DB.Context -> DB.DBAction ()
-checkExists item db_ctx = DB.exists item db_ctx >>= doCheck
-  where
-    doCheck does_exist = if does_exist
-        then return ()
-        else DB.getName item db_ctx >>= \name ->
-            liftIO $ throw $ EX.TextError $ name `append` " does not exist"
+renameEntryByName :: Text -> Text -> T.Shelf -> T.Shelf
+renameEntryByName from to shelf = shelf { T.s_entries = map modEl (T.s_entries shelf) }
+    where 
+        modEl el = if (entryNameMatches from el) 
+            then el { T.name = to }
+            else el
 
-copyEntry :: T.Shelf -> T.Shelf -> T.Entry -> DB.Context -> IO ()
+copyEntry :: T.Shelf -> T.Shelf -> T.Entry -> IO T.Shelf
 copyEntry from to ent = copyEntryByName from to (T.name ent)
 
-moveEntry :: T.Shelf -> T.Shelf -> T.Entry -> DB.Context -> IO ()
-moveEntry from to ent db_ctx =
-    copyEntry from to ent db_ctx
-        >> removeEntryByName (T.name ent) (DB.changeTargetShelf from db_ctx)
+moveEntry :: T.Shelf -> T.Shelf -> T.Entry -> IO ()
+moveEntry from to ent =
+    copyEntry from to ent 
+        *> DB.saveShelfDefault (removeEntryByName from (T.name ent))
 
-checkEntryExistsByName :: Text -> DB.Context -> DB.DBAction ()
-checkEntryExistsByName entry_name ctx = liftIO (DB.makeEntry entry_name "" ctx)
-    >>= \entry -> checkEntryExists entry ctx
+checkEntryExistsByName :: Text -> T.Shelf -> Bool
+checkEntryExistsByName entry_name shelf = isJust $ find (\e -> (T.name e) == entry_name) (T.s_entries shelf) 
 
-checkEntryExists :: T.Entry -> DB.Context -> DB.DBAction ()
-checkEntryExists entry ctx = DB.exists entry ctx >>= \exists ->
-    liftIO $ if exists
-        then return ()
-        else throw $ DoesNotExist $ EX.Entry $ T.name entry
+checkEntryExists :: T.Entry -> T.Shelf -> Bool
+checkEntryExists entry_name shelf = isJust $ find ((==) entry_name) (T.s_entries shelf) 
 
-checkFileNotExists :: T.Entry -> DB.Context -> DB.DBAction ()
-checkFileNotExists entry ctx = DB.exists entry ctx >>= \exists ->
-    when exists $ throw $ EX.NamingConflict $ EX.Entry (T.name entry)
+checkFileNotExists :: T.Entry -> T.Shelf -> IO ()
+checkFileNotExists entry shelf = check $ find ((==) entry) (T.s_entries shelf) 
+    where 
+        check Nothing = return ()
+        check (Just _) = throw $ EX.NamingConflict $ EX.Entry (T.name entry)
 
-checkShelfNotExists :: T.Shelf -> DB.Context -> DB.DBAction ()
-checkShelfNotExists shelf ctx = DB.exists shelf ctx >>= \exists ->
-    when exists $ throw $ EX.NamingConflict $ EX.Shelf $ shelfDecider shelf
-  where
-    shelfDecider (T.ShelfName n) = n
-    shelfDecider (T.ShelfID   _) = "Unknown"
+checkShelfNotExists :: Text -> IO ()
+checkShelfNotExists shelf = DB.shelfExists shelf >>= \exists ->
+    when exists $ throw $ EX.NamingConflict $ EX.Shelf shelf
 
-addShelf :: T.Shelf -> DB.Context -> DB.DBAction ()
-addShelf shelf db_ctx =
-    checkShelfNotExists shelf db_ctx >> DB.insert shelf db_ctx
+addShelf :: Text -> IO ()
+addShelf shelf = checkShelfNotExists shelf >> DB.saveShelfDefault (T.Shelf shelf [])
 
-connectToDb :: Maybe T.Shelf -> Maybe Text -> Bool -> DB.DBAction DB.Context
-connectToDb shelf_name db_path is_dryrun = DB.connect shelf connString connType
-  where
-    shelf      = fromMaybe DB.defaultShelf shelf_name
-    connString = makeConnString db_path
-    connType   = makeConnType is_dryrun
-
-makeConnString :: Maybe Text -> DB.ConnectionString
-makeConnString (Just ":memory:") = DB.InMemory
-makeConnString (Just path      ) = DB.Path $ unpack path
-makeConnString Nothing           = DB.DefaultDB
-
-makeConnType True  = DB.DryRun
-makeConnType False = DB.Normal
-
-moveEntryByName :: Text -> Text -> Text -> DB.Context -> DB.DBAction ()
-moveEntryByName from to name ctx =
-    copyEntryByName (T.ShelfName from) (T.ShelfName to) name ctx
-        >> removeEntryByName name ctx
+moveEntryByName :: Text -> Text -> Text -> IO T.Shelf
+moveEntryByName from to name = 
+    DB.loadShelfFromName from >>= \fshelf -> DB.loadShelfFromName to >>= \tshelf -> doRemove fshelf tshelf
+    where 
+        doRemove :: Maybe T.Shelf -> Maybe T.Shelf -> IO T.Shelf
+        doRemove (Just f) (Just t) = (\s -> removeEntryByName s name) <$> copyEntryByName f t name 
 
 withOutputHandle :: Maybe FilePath -> (Handle -> IO r) -> IO r
 withOutputHandle (Just "-") act = act stdout
@@ -178,51 +158,22 @@ withInputHandle (Just "-") act = act stdin
 withInputHandle (Just fp ) act = withFile fp ReadMode act
 withInputHandle Nothing    act = act stdin
 
-exportShelf :: T.Shelf -> DB.Context -> Maybe FilePath -> DB.DBAction ()
-exportShelf shelf db_ctx output_path = checkExists >> doExport
+exportShelf :: Maybe FilePath -> T.Shelf -> IO ()
+exportShelf path shelf = checkExists >> doExport
   where
-    checkExists = checkShelfExists shelf db_ctx
-    doExport    = withOutputHandle output_path $ IE.exportToHandle shelf db_ctx
+    checkExists = checkShelfExists (T.s_name shelf)
+    doExport    = withOutputHandle path $ IE.exportToHandle shelf 
 
-importShelf :: Maybe FilePath -> DB.Context -> DB.DBAction ()
-importShelf fp db_ctx = getInputHandle fp >>= \file ->
-    void (IE.importFromHandle file db_ctx :: DB.DBAction T.Shelf)
+importShelf :: Maybe FilePath -> IO (Maybe T.Shelf)
+importShelf fp = getInputHandle fp >>= IE.importFromHandle
 
 nameForPath :: FilePath -> IO Text
 nameForPath path = pack . FP.takeFileName <$> DIR.makeAbsolute path
 
-entryNameIsFree :: Text -> DB.Context -> DB.DBAction Bool
-entryNameIsFree name db_ctx = liftIO getEntry
-    >>= \entry -> DB.exists entry db_ctx
-    where getEntry = DB.makeEntry name "" db_ctx
-
-entryNameFromPathIfUnique :: FilePath -> DB.Context -> DB.DBAction (Maybe Text)
-entryNameFromPathIfUnique path db_ctx = getName >>= checkUnique
-  where
-    getName = liftIO $ FSM.nameForPath path
-    checkUnique name = uniqueOrNothing name <$> FSM.entryNameIsFree name db_ctx
-    uniqueOrNothing :: Text -> Bool -> Maybe Text
-    uniqueOrNothing name exists = if not exists then Just name else Nothing
-
-
-insertEntries :: (T.Shelf, [T.Entry]) -> DB.Context -> DB.DBAction ()
-insertEntries (shelf, entries) db_ctx =
-    maybeInsertShelf >> DB.insertMany entries db_ctx
-  where
-    maybeInsertShelf = DB.exists shelf db_ctx
-        >>= \exists -> unless exists $ DB.insert shelf db_ctx
 
 entryFromPath :: FilePath -> IO T.Entry
 entryFromPath path =
     T.Entry <$> nameForPath path <*> (pack <$> DIR.makeAbsolute path)
-
-createEntriesRecursive :: FilePath -> Integer -> IO [T.Entry]
-createEntriesRecursive fp depth =
-    listDirRecursive fp depth >>= \paths -> mapM entryFromPath paths
-
-addEntriesRecursive :: FilePath -> Integer -> DB.Context -> DB.DBAction ()
-addEntriesRecursive fp depth db_ctx = liftIO (createEntriesRecursive fp depth)
-    >>= \entries -> DB.insertMany entries db_ctx
 
 dirExistsOrError :: FilePath -> IO ()
 dirExistsOrError dir = DIR.doesDirectoryExist dir >>= \exists -> if exists
@@ -252,25 +203,11 @@ listDirRecursive fp depth
     exploreNextLevel paths =
         concat <$> mapM (\p -> listDirRecursive p (depth - 1)) paths
 
-addMany :: (DB.DBObject a) => [a] -> DB.Context -> DB.DBAction ()
-addMany = DB.insertMany
-
-getUniqueOutOf :: (DB.DBObject a) => [a] -> DB.Context -> DB.DBAction [a]
-getUniqueOutOf items db_ctx = existenceList
-    where existenceList = filterM (`DB.exists` db_ctx) items
-
 makeEntry :: Text -> FilePath -> IO T.Entry
 makeEntry name fp =
     T.Entry name . pack <$> (Sys.expandPath fp >>= DIR.makeAbsolute)
 
 type ItemExistsMap a = [(a, Bool)]
-
-generateMapExists
-    :: (DB.DBObject a) => DB.Context -> [a] -> DB.DBAction (ItemExistsMap a)
-generateMapExists db_ctx items = makeMap <$> generateExistsList
-  where
-    generateExistsList = mapM (`DB.exists` db_ctx) items
-    makeMap            = zip items
 
 notExistsOutOf :: [(a, Bool)] -> [a]
 notExistsOutOf items = [ fst it | it <- items, not $ snd it ]

@@ -61,103 +61,93 @@ handleErrors err = case err of
     Left  err -> EX.printError err
     Right _   -> return ()
 
-parseOptions :: ArgsResult -> DB.DBAction ()
+parseOptions :: ArgsResult -> IO ()
 parseOptions (ArgsResult cmd tshelf db_path dry_run) =
-    parseTargetShelf db_path tshelf dry_run >>= parseCommand cmd
+    parseTargetShelf db_path tshelf >>= \s -> case s of 
+      Just shelf -> parseCommand cmd shelf
+      Nothing -> print "uh oh"
   where
-    parseTargetShelf db_path (Just name) =
-        FSM.connectToDb (Just (T.ShelfName name)) db_path
-    parseTargetShelf db_path Nothing = FSM.connectToDb Nothing db_path
+    parseTargetShelf :: (Maybe Text) -> (Maybe Text) -> IO (Maybe T.Shelf)
+    parseTargetShelf db_path Nothing = parseTargetShelf db_path (Just "default")
+    parseTargetShelf db_path (Just name) = DB.loadShelfFromName name >>= \s -> checkShelf s >> return s
+      where
+        checkShelf Nothing = throw $ EX.DoesNotExist $ EX.Shelf name
+        checkShelf (Just _) = return ()
 
-parseCommand :: Command -> DB.Context -> DB.DBAction ()
-parseCommand (List path_only match) ctx = FSM.getAll ctx match >>= printItems
+
+parseCommand :: Command -> T.Shelf -> IO ()
+parseCommand (List path_only match) shelf = printItems $ FSM.entriesMatching shelf match 
   where
     printItems [] = case match of
         Just m ->
             throw $ EX.TextError $ "No items matching '" `append` m `append` "'"
         Nothing -> return ()
 
-    printItems items = liftIO $ pathsPrinter path_only items
-parseCommand (AddCmd [path] chosen_name no_confirm False _) ctx = getEntry
-    >>= \ent -> FSM.addEntry ent ctx
-  where
-    getEntry :: IO T.Entry
-    getEntry = case chosen_name of
-        Just name -> FSM.makeEntry name path
-        Nothing   -> createEntryFromInput path ctx no_confirm
+    printItems items = pathsPrinter path_only items
 
-parseCommand (AddCmd paths _ no_confirm False _) ctx =
-    createEntries >>= (`FSM.addMany` ctx)
+parseCommand (AddCmd [path] chosen_name no_confirm False _) shelf = 
+  getEntry >>= saveEnt
   where
-    createEntries :: IO [T.Entry]
-    createEntries =
-        mapM (\path -> createEntryFromInput path ctx no_confirm) paths
-parseCommand (AddCmd paths chosen_name no_confirm True depth) ctx =
-    createEntries >>= \entries -> FSM.addMany entries ctx
+    saveEnt :: Maybe T.Entry -> IO ()
+    saveEnt Nothing = return ()
+    saveEnt (Just ent) = DB.saveShelf (FSM.addEntry ent shelf) Nothing
+    getEntry :: IO (Maybe T.Entry)
+    getEntry = case chosen_name of
+        Just name -> Just <$> FSM.makeEntry name path
+        Nothing   -> createEntryFromInput path no_confirm
+
+parseCommand (AddCmd paths _ no_confirm False _) shelf = 
+    (appendEntries . catMaybes <$> createEntries) >>= DB.saveShelfDefault 
   where
-    findEntries :: DB.DBAction [T.Entry]
-    findEntries = concat <$> mapM (`FSM.createEntriesRecursive` depth) paths
-    createEntries :: DB.DBAction [T.Entry]
-    createEntries = findEntries >>= filterEntries
-    filterEntries :: [T.Entry] -> DB.DBAction [T.Entry]
-    filterEntries entries = if no_confirm
-        then FSM.generateMapExists ctx entries >>= \mapped ->
-            printFailedEntries mapped >> return
-                (fst $ FSM.extractDuplicates $ FSM.notExistsOutOf mapped)
-        else confirmNames entries
-      where
-        printFailedEntries :: [(T.Entry, Bool)] -> DB.DBAction ()
-        printFailedEntries entries =
-            mapM_
-                    ( printf
-                            "Cannot add '%s' because an entry with that name already exists\n"
-                    . T.name
-                    )
-                $ nonUniqueEntries entries
-        confirmNames = mapM promptEntry
-        dupes        = FSM.extractDuplicates entries
-        nonUniqueEntries entries = snd dupes ++ FSM.existsOutOf entries
-    promptEntry :: T.Entry -> IO T.Entry
-    promptEntry ent =
-        (\n -> ent { T.name = n }) <$> namePrompt (Just $ T.name ent)
-    setNames entries names =
-        zipWith (\name entry -> entry { T.name = name }) names entries
-parseCommand (Remove name no_confirm) ctx = liftIO getConfirm >>= removeDecider
+    createEntries :: IO [Maybe T.Entry]
+    createEntries = mapM (\p -> createEntryFromInput p no_confirm) paths
+    appendEntries :: [T.Entry] -> T.Shelf
+    appendEntries entries =  shelf { T.s_entries = T.s_entries shelf ++ entries }
+
+parseCommand (AddCmd paths chosen_name no_confirm True depth) _ = print "This argument is deprecated and should not be used" 
+
+parseCommand (Remove name no_confirm) shelf = (removeDecider <$> getConfirm) >>= DB.saveShelfDefault
   where
     getConfirm = if no_confirm
         then return True
         else getConfirmationYesNo
             "This will permanently remove this entry, are you sure?"
-    removeDecider remove = when remove $ DB.removeFile name ctx
-parseCommand (ShelfCmd cmd        ) ctx = parseShelvesCmd cmd ctx
-parseCommand (MoveCmd from to name) ctx = FSM.moveEntryByName from to name ctx
-parseCommand (CopyCmd from to name) ctx =
-    FSM.copyEntryByName (T.ShelfName from) (T.ShelfName to) name ctx
-parseCommand (RenameCmd from to) ctx = FSM.renameEntryByName from to ctx
+    removeDecider :: Bool -> T.Shelf
+    removeDecider True = FSM.removeEntryByName shelf name
+    removeDecider False = shelf
+
+parseCommand (ShelfCmd cmd        ) _ = parseShelvesCmd cmd 
+parseCommand (MoveCmd from to name) shelf = FSM.moveEntryByName from to name >> return ()
+parseCommand (CopyCmd from to name) shelf =
+    FSM.copyEntryByName' (from) (to) name >> return ()
+
+parseCommand (RenameCmd from to) shelf = DB.saveShelfDefault $ FSM.renameEntryByName from to shelf 
 parseCommand VersionCmd          _   = liftIO Pretty.printVersionInfo
 parseCommand ViewLicenseCmd      _   = liftIO Pretty.printLicense
 
-parseShelvesCmd :: ShelfArgs -> DB.Context -> DB.DBAction ()
-parseShelvesCmd (AddShelf name) ctx = FSM.addShelf (T.ShelfName name) ctx
-parseShelvesCmd (RemoveShelf name no_confirm) ctx =
-    liftIO getConfirm >>= removeDecider
+parseShelvesCmd :: ShelfArgs -> IO ()
+parseShelvesCmd (AddShelf name) = DB.saveShelfDefault (T.Shelf { T.s_name = name, T.s_entries = [] }) 
+
+parseShelvesCmd (RemoveShelf name no_confirm) =
+    getConfirm >>= removeDecider
   where
     getConfirm = if no_confirm
         then return True
         else
             getConfirmationYesNo
                 "This will permanently remove this shelf and all of it's entries, are you sure?"
-    removeDecider remove = when remove $ DB.removeShelf name ctx
-parseShelvesCmd ListShelves ctx =
-    (FSM.getAll ctx Nothing :: DB.DBAction [T.Shelf])
-        >>= \list -> liftIO $ Pretty.printList list
-parseShelvesCmd (RenameShelf from to) ctx = FSM.renameShelfByName from to ctx
-parseShelvesCmd (ImportShelf path   ) ctx = FSM.importShelf path ctx
-parseShelvesCmd (ExportShelf name path) ctx =
-    FSM.exportShelf (T.ShelfName name) ctx path
+    removeDecider remove = when remove $ DB.removeShelf name 
+
+parseShelvesCmd ListShelves = (catMaybes <$> DB.allShelves) >>= Pretty.printList  
+parseShelvesCmd (RenameShelf from to) = FSM.renameShelfByName from to 
+parseShelvesCmd (ImportShelf path   ) = FSM.importShelf path >> return ()
+parseShelvesCmd (ExportShelf name path) = DB.loadShelfFromName name >>= check >>= FSM.exportShelf path >> return ()
+  where 
+    check (Just name) = return name 
+    check Nothing = throw $ EX.DoesNotExist $ EX.Shelf name
 
 extractPaths :: [T.Entry] -> [Text]
-extractPaths = map DB.path
+extractPaths = map T.path
 
 pathsPrinter :: Bool -> [T.Entry] -> IO ()
 pathsPrinter False files = mapM_ Pretty.printPath $ extractPaths files
@@ -190,12 +180,15 @@ namePrompt name =
         putStrLn "Please enter a valid name" >> namePrompt Nothing
     decodeName name _ = return name
 
-createEntryFromInput :: FilePath -> DB.Context -> Bool -> IO T.Entry
-createEntryFromInput path db_ctx no_confirm =
-    getName >>= (`FSM.makeEntry` path)
-  where
-    getName = if no_confirm
-        then liftIO $ FSM.nameForPath path
-        else doPrompt >>= \name -> liftIO $ namePrompt name
-
-    doPrompt = FSM.entryNameFromPathIfUnique path db_ctx
+createEntryFromInput :: FilePath -> Bool -> IO (Maybe T.Entry)
+createEntryFromInput path confirm = 
+  act <$> (FSM.nameForPath path >>= check)
+  where 
+    check :: Text -> IO (Maybe Text)
+    check name = if confirm
+      then getConfirmationYesNo name >>= \yn -> if yn 
+          then return $ Just name 
+          else return Nothing 
+      else return (Just name)
+    act :: Maybe Text -> Maybe T.Entry
+    act rs = (\n -> T.Entry n (pack path)) <$> rs
