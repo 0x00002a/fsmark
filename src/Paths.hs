@@ -16,23 +16,28 @@
 -- along with fsmark.  If not, see <http://www.gnu.org/licenses/>.
 {-# LANGUAGE OverloadedStrings #-}
 
-module Paths (shelvesPath, Path, shelfPath) where
+module Paths (shelvesPath, Path, shelfPath, shelfExtension) where
 
-import Data.Text (Text, append, pack, unpack)
+import Data.Text (Text, append, isSuffixOf, pack, unpack)
 import qualified System.Directory as DIR
-import System.FilePath ((</>))
+import System.FilePath ((-<.>), (</>))
 import qualified Types as T
 
 type Path = Text
 
+shelfExtension :: Text
+shelfExtension = ".shelf.json"
 shelvesPath :: IO FilePath
-shelvesPath = (\p1 -> p1 </> "shelves") <$> base
+shelvesPath = ((\p1 -> p1 </> "shelves") <$> base) >>= \p -> DIR.createDirectoryIfMissing True p >> return p
   where
-    base = DIR.getXdgDirectory DIR.XdgData "fsm" >>= \p -> DIR.createDirectoryIfMissing True p >> return p
+    base = DIR.getXdgDirectory DIR.XdgData "fsm"
 
 shelfPath :: T.Shelf -> IO FilePath
 shelfPath shelf = doAppend <$> shelvesPath
   where
     name = T.s_name shelf
-    fname = name `append` ".shelf.json"
-    doAppend base = base </> unpack fname
+    fname =
+      if shelfExtension `isSuffixOf` name
+        then unpack name
+        else unpack $ name `append` shelfExtension
+    doAppend base = base </> fname

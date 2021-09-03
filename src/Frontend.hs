@@ -61,6 +61,11 @@ handleErrors err = case err of
     Left  err -> EX.printError err
     Right _   -> return ()
 
+defaultShelfName :: Text
+defaultShelfName = "default"
+
+defaultShelf :: T.Shelf
+defaultShelf = T.Shelf {T.s_name = defaultShelfName, T.s_entries = []}
 parseOptions :: ArgsResult -> IO ()
 parseOptions (ArgsResult cmd tshelf db_path dry_run) =
     parseTargetShelf db_path tshelf >>= \s -> case s of 
@@ -68,12 +73,18 @@ parseOptions (ArgsResult cmd tshelf db_path dry_run) =
       Nothing -> print "uh oh"
   where
     parseTargetShelf :: (Maybe Text) -> (Maybe Text) -> IO (Maybe T.Shelf)
-    parseTargetShelf db_path Nothing = parseTargetShelf db_path (Just "default")
+    parseTargetShelf db_path Nothing = ensureExistsDefault
     parseTargetShelf db_path (Just name) = DB.loadShelfFromName name >>= \s -> checkShelf s >> return s
       where
         checkShelf Nothing = throw $ EX.DoesNotExist $ EX.Shelf name
         checkShelf (Just _) = return ()
 
+    ensureExistsDefault :: IO (Maybe T.Shelf)
+    ensureExistsDefault =
+      DB.shelfExists defaultShelfName >>= \ex ->
+        if ex
+          then DB.loadShelfFromName defaultShelfName
+          else DB.saveShelfDefault defaultShelf >> (Just <$> return defaultShelf)
 
 parseCommand :: Command -> T.Shelf -> IO ()
 parseCommand (List path_only match) shelf = printItems $ FSM.entriesMatching shelf match 

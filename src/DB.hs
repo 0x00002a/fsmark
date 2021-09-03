@@ -15,37 +15,36 @@
 -- file-shelf.  If not, see <http://www.gnu.org/licenses/>.
 {-# LANGUAGE OverloadedStrings #-}
 
-module DB
-where
-
-import qualified Types                         as T
-import qualified System.Directory as DIR
-import qualified Paths as P
-import qualified Data.Text as TE
-import Data.Text (Text, pack)
+module DB where
 import Data.Aeson (decode)
 import qualified Data.ByteString.Lazy as B
-import Json 
+import Data.Text (Text, isSuffixOf, pack)
+import qualified Data.Text as TE
 import qualified ImportExport as EXP
+import Json
+import qualified Paths as P
+import qualified System.Directory as DIR
+import qualified Types as T
 
 allShelves :: IO [Maybe T.Shelf]
-allShelves = P.shelvesPath >>= DIR.listDirectory >>= mapM (\p -> loadShelfFromName $ pack p)
+allShelves =
+  P.shelvesPath
+    >>= DIR.listDirectory
+    >>= \dirs -> mapM (\p -> loadShelfFromName $ pack p) (filter (\p -> isSuffixOf P.shelfExtension (pack p)) dirs)
 
 saveShelf :: T.Shelf -> Maybe FilePath -> IO ()
-saveShelf shelf Nothing =(Just <$> P.shelfPath shelf) >>= saveShelf shelf 
+saveShelf shelf Nothing = (Just <$> P.shelfPath shelf) >>= saveShelf shelf
 saveShelf shelf (Just path) = EXP.exportToFile shelf path
 
 saveShelfDefault shelf = saveShelf shelf Nothing
 
-shelfExists :: Text -> IO Bool 
+shelfExists :: Text -> IO Bool
 shelfExists name = P.shelfPath (T.Shelf name []) >>= DIR.doesFileExist
 
 loadShelfFromName :: Text -> IO (Maybe T.Shelf)
-loadShelfFromName name = decode <$> loadData 
-    where 
-        loadData :: IO B.ByteString
-        loadData = P.shelfPath (T.Shelf name []) >>= B.readFile
-
-
+loadShelfFromName name = decode <$> loadData
+  where
+    loadData :: IO B.ByteString
+    loadData = P.shelfPath (T.Shelf name []) >>= B.readFile
 removeShelf :: Text -> IO ()
 removeShelf name = P.shelfPath (T.Shelf name []) >>= DIR.removeFile
