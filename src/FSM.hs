@@ -76,7 +76,8 @@ copyEntryByName from to entry = if from == to
     existsCheck = checkShelfExists (T.s_name from) >> checkShelfExists (T.s_name to) 
 
 entriesMatching :: T.Shelf -> Maybe Text -> [T.Entry] 
-entriesMatching shelf _ = T.s_entries shelf
+entriesMatching shelf Nothing = T.s_entries shelf
+entriesMatching shelf (Just name) = filter (entryNameMatches name) $ T.s_entries shelf
 
 checkShelfExists :: Text -> IO ()
 checkShelfExists shelf = DB.shelfExists shelf >>= check
