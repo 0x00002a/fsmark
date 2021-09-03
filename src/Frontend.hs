@@ -67,14 +67,14 @@ defaultShelfName = "default"
 defaultShelf :: T.Shelf
 defaultShelf = T.Shelf {T.s_name = defaultShelfName, T.s_entries = []}
 parseOptions :: ArgsResult -> IO ()
-parseOptions (ArgsResult cmd tshelf db_path dry_run) =
-    parseTargetShelf db_path tshelf >>= \s -> case s of 
+parseOptions (ArgsResult cmd tshelf) =
+    parseTargetShelf tshelf >>= \s -> case s of 
       Just shelf -> parseCommand cmd shelf
       Nothing -> print "uh oh"
   where
-    parseTargetShelf :: (Maybe Text) -> (Maybe Text) -> IO (Maybe T.Shelf)
-    parseTargetShelf db_path Nothing = ensureExistsDefault
-    parseTargetShelf db_path (Just name) = DB.loadShelfFromName name >>= \s -> checkShelf s >> return s
+    parseTargetShelf :: (Maybe Text) -> IO (Maybe T.Shelf)
+    parseTargetShelf Nothing = ensureExistsDefault
+    parseTargetShelf (Just name) = DB.loadShelfFromName name >>= \s -> checkShelf s >> return s
       where
         checkShelf Nothing = throw $ EX.DoesNotExist $ EX.Shelf name
         checkShelf (Just _) = return ()
@@ -96,7 +96,7 @@ parseCommand (List path_only match) shelf = printItems $ FSM.entriesMatching she
 
     printItems items = pathsPrinter path_only items
 
-parseCommand (AddCmd [path] chosen_name no_confirm False _) shelf = 
+parseCommand (AddCmd path chosen_name no_confirm) shelf = 
   getEntry >>= saveEnt
   where
     saveEnt :: Maybe T.Entry -> IO ()
@@ -107,15 +107,6 @@ parseCommand (AddCmd [path] chosen_name no_confirm False _) shelf =
         Just name -> Just <$> FSM.makeEntry name path
         Nothing   -> createEntryFromInput path no_confirm
 
-parseCommand (AddCmd paths _ no_confirm False _) shelf = 
-    (appendEntries . catMaybes <$> createEntries) >>= DB.saveShelfDefault 
-  where
-    createEntries :: IO [Maybe T.Entry]
-    createEntries = mapM (\p -> createEntryFromInput p no_confirm) paths
-    appendEntries :: [T.Entry] -> T.Shelf
-    appendEntries entries =  shelf { T.s_entries = T.s_entries shelf ++ entries }
-
-parseCommand (AddCmd paths chosen_name no_confirm True depth) _ = print "This argument is deprecated and should not be used" 
 
 parseCommand (Remove name no_confirm) shelf = (removeDecider <$> getConfirm) >>= DB.saveShelfDefault
   where
