@@ -81,7 +81,7 @@ parseOptions (ArgsResult cmd tshelf) =
       parseTargetShelf tshelf >>= \s -> case s of
         Just shelf -> parseCommand cmd shelf
         Nothing -> return ()
-    checkWhetherHandled (Just _) = return ()
+    checkWhetherHandled (Just s) = s
 
     preparseCmd VersionCmd = Just $ Pretty.printVersionInfo
     preparseCmd ViewLicenseCmd = Just $ Pretty.printLicense
